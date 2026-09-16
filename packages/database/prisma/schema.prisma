@@ -1,0 +1,2545 @@
+// ============================================================================
+//  Nexo CRM · Esquema de datos
+// ----------------------------------------------------------------------------
+//  Convenciones que rigen TODO este archivo:
+//
+//  1. Toda tabla de negocio lleva `tenantId` y una política RLS en
+//     migrations/*_rls/migration.sql. La columna sola no aísla nada: el
+//     aislamiento real lo impone Postgres.
+//  2. Las claves primarias son UUID v7 (ordenables por tiempo) generadas por
+//     `uuid_generate_v7()`, creada en la migración inicial.
+//  3. Todo índice sobre una tabla con ámbito de empresa empieza por `tenantId`.
+//     Sin eso, Postgres recorre filas de otras empresas antes de descartarlas.
+//  4. Borrado lógico (`deletedAt`) sólo donde el usuario puede arrepentirse.
+//     Lo demás se borra de verdad, en cascada.
+//  5. Los importes son Decimal(14,2) y nunca Float. El dinero no es binario.
+// ============================================================================
+
+generator client {
+  provider        = "prisma-client-js" 
+ previewFeatures = ["postgresqlExtensions", "relationJoins"]
+  binaryTargets   = ["native", "linux-musl-arm64-openssl-3.0.x", "linux-musl-openssl-3.0.x"]
+}
+datasource db {
+  provider   = "postgresql"
+  // Rol `nexo_app`: lo usa la aplicación. Sin BYPASSRLS y sin permiso para
+  // alterar el esquema.
+  url        = env("DATABASE_URL")
+  // Rol dueño: lo usa Prisma Migrate. Sin esto, las migraciones intentarían
+  // crear tablas con `nexo_app`, que a propósito no puede hacerlo.
+  directUrl  = env("DIRECT_DATABASE_URL")
+  extensions = [pgcrypto, pg_trgm, vector, btree_gin]
+}
+
+// ============================================================================
+//  DOMINIO 1 · PLATAFORMA
+//  Vive por encima de las empresas. Sin `tenantId`, sin RLS: son los datos
+//  del negocio SaaS, no de sus clientes.
+// ============================================================================
+
+model Plan {
+  id          String  @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  code        String  @unique // "free" | "starter" | "pro" | "business"
+  name        String
+  description String?
+
+  priceMonthly Decimal @default(0) @db.Decimal(10, 2) @map("price_monthly")
+  priceYearly  Decimal @default(0) @db.Decimal(10, 2) @map("price_yearly")
+  currency     String  @default("USD") @db.Char(3)
+
+  // Límites aplicados en caliente por el guard de cuotas.
+  // -1 = ilimitado. Se leen desde caché de Redis, no de la BD, en cada petición.
+  maxUsers          Int @default(3) @map("max_users")
+  maxContacts       Int @default(1000) @map("max_contacts")
+  maxChannels       Int @default(1) @map("max_channels")
+  maxWorkflows      Int @default(3) @map("max_workflows")
+  maxAiSources      Int @default(10) @map("max_ai_sources")
+  maxStorageMb      Int @default(1024) @map("max_storage_mb")
+  monthlyAiCredits  Int @default(0) @map("monthly_ai_credits")
+  monthlyMessages   Int @default(1000) @map("monthly_messages")
+
+  isPublic  Boolean @default(true) @map("is_public") // visible en la página de precios
+  isDefault Boolean @default(false) @map("is_default") // asignado al registrarse
+  trialDays Int     @default(14) @map("trial_days")
+  sortOrder Int     @default(0) @map("sort_order")
+
+  features      PlanFeature[]
+  subscriptions Subscription[]
+
+  createdAt DateTime  @default(now()) @db.Timestamptz(6) @map("created_at")
+  updatedAt DateTime  @updatedAt @db.Timestamptz(6) @map("updated_at")
+  archivedAt DateTime? @db.Timestamptz(6) @map("archived_at")
+
+  @@index([isPublic, sortOrder])
+  @@map("plan")
+}
+
+/// Banderas de funcionalidad por plan. Separadas de los límites numéricos
+/// porque se consultan distinto: "¿puede usar IA?" vs "¿cuántos contactos?".
+model PlanFeature {
+  id      String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  planId  String @db.Uuid @map("plan_id")
+  plan    Plan   @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  key     String // "ai.rag" | "automation.visual" | "whatsapp" | "api.public" | "custom_roles"
+  enabled Boolean @default(true)
+  config  Json?   @db.JsonB
+
+  @@unique([planId, key])
+  @@map("plan_feature")
+}
+
+/// La empresa. Raíz de todo el aislamiento del sistema.
+model Tenant {
+  id   String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  slug String @unique @db.VarChar(63) // subdominio y segmento de URL: /w/acme
+  name String @db.VarChar(160)
+
+  status TenantStatus @default(TRIAL)
+
+  // Identidad visual, usada en la app, los correos y los PDFs.
+  logoUrl      String? @map("logo_url")
+  brandColor   String? @db.VarChar(9) @map("brand_color")
+  legalName    String? @db.VarChar(200) @map("legal_name")
+  taxId        String? @db.VarChar(40) @map("tax_id")
+  addressLine  String? @map("address_line")
+  city         String? @db.VarChar(120)
+  country      String? @db.Char(2)
+  phone        String? @db.VarChar(32)
+  website      String?
+
+  timezone String @default("America/Guayaquil") @db.VarChar(64)
+  locale   String @default("es") @db.VarChar(10)
+  currency String @default("USD") @db.Char(3)
+
+  /// Ajustes libres del espacio de trabajo. Se cachean en Redis y se
+  /// invalidan por evento; nunca se leen dentro de un bucle.
+  settings Json @default("{}") @db.JsonB
+
+  suspendedAt     DateTime? @db.Timestamptz(6) @map("suspended_at")
+  suspendedReason String? @map("suspended_reason")
+  deletedAt       DateTime? @db.Timestamptz(6) @map("deleted_at")
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
+  updatedAt DateTime @updatedAt @db.Timestamptz(6) @map("updated_at")
+
+  subscription   Subscription?
+  memberships    Membership[]
+  roles          Role[]
+  usage          TenantUsage[]
+  apiKeys        ApiKey[]
+  auditLogs      AuditLog[]
+  contacts       Contact[]
+  companies      Company[]
+  tags           Tag[]
+  customFields   CustomField[]
+  notes          Note[]
+  activities     Activity[]
+  pipelines      Pipeline[]
+  deals          Deal[]
+  products       Product[]
+  lostReasons    LostReason[]
+  channels       Channel[]
+  conversations  Conversation[]
+  messages       Message[]
+  waTemplates    WaTemplate[]
+  aiSources      AiSource[]
+  aiThreads      AiThread[]
+  aiUsage        AiUsage[]
+  aiSetting      AiSetting?
+  workflows      Workflow[]
+  documents      Document[]
+  taxRates       TaxRate[]
+  numberSequences NumberSequence[]
+  docTemplates   DocTemplate[]
+  tasks          Task[]
+  events         Event[]
+  dashboards     Dashboard[]
+  savedViews     SavedView[]
+  notifications  Notification[]
+  files          File[]
+  outboundHooks  OutboundWebhook[]
+
+  @@index([status])
+  @@index([deletedAt])
+  @@map("tenant")
+}
+
+enum TenantStatus {
+  TRIAL
+  ACTIVE
+  PAST_DUE
+  SUSPENDED
+  CANCELLED
+}
+
+model Subscription {
+  id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  tenantId String @unique @db.Uuid @map("tenant_id")
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  planId String @db.Uuid @map("plan_id")
+  plan   Plan   @relation(fields: [planId], references: [id])
+
+  status   SubscriptionStatus @default(TRIALING)
+  interval PlanInterval       @default(MONTHLY)
+
+  // Referencias a la pasarela. Nulas hasta la Fase 5: el modelo está
+  // preparado pero ningún cobro está acoplado todavía.
+  providerName           String? @db.VarChar(40) @map("provider_name")
+  providerCustomerId     String? @db.VarChar(120) @map("provider_customer_id")
+  providerSubscriptionId String? @unique @db.VarChar(120) @map("provider_subscription_id")
+
+  currentPeriodStart DateTime  @default(now()) @db.Timestamptz(6) @map("current_period_start")
+  currentPeriodEnd   DateTime  @db.Timestamptz(6) @map("current_period_end")
+  trialEndsAt        DateTime? @db.Timestamptz(6) @map("trial_ends_at")
+  cancelAtPeriodEnd  Boolean   @default(false) @map("cancel_at_period_end")
+  canceledAt         DateTime? @db.Timestamptz(6) @map("canceled_at")
+
+  /// Sobrescribe límites del plan para un cliente concreto (acuerdos a medida).
+  /// Se fusiona por encima del plan al calcular cuotas.
+  limitOverrides Json? @db.JsonB @map("limit_overrides")
+
+  invoices SubscriptionInvoice[]
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
+  updatedAt DateTime @updatedAt @db.Timestamptz(6) @map("updated_at")
+
+  @@index([status, currentPeriodEnd])
+  @@map("subscription")
+}
+
+enum SubscriptionStatus {
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  PAUSED
+}
+
+enum PlanInterval {
+  MONTHLY
+  YEARLY
+}
+
+/// Facturas que la plataforma emite a sus empresas cliente.
+/// Distinto de `Document`, que son las facturas que las empresas emiten a los suyos.
+model SubscriptionInvoice {
+  id             String       @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  subscriptionId String       @db.Uuid @map("subscription_id")
+  subscription   Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  number   String   @unique @db.VarChar(40)
+  amount   Decimal  @db.Decimal(12, 2)
+  currency String   @default("USD") @db.Char(3)
+  status   String   @default("open") @db.VarChar(20) // open | paid | void | uncollectible
+  paidAt   DateTime? @db.Timestamptz(6) @map("paid_at")
+  dueAt    DateTime? @db.Timestamptz(6) @map("due_at")
+  pdfUrl   String? @map("pdf_url")
+
+  providerInvoiceId String? @unique @db.VarChar(120) @map("provider_invoice_id")
+
+  periodStart DateTime @db.Timestamptz(6) @map("period_start")
+  periodEnd   DateTime @db.Timestamptz(6) @map("period_end")
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
+
+  @@index([subscriptionId, createdAt])
+  @@index([status, dueAt])
+  @@map("subscription_invoice")
+}
+
+/// Consumo agregado por empresa y día. Alimenta los límites de plan y el
+/// panel de plataforma sin tener que contar filas en tablas grandes.
+model TenantUsage {
+  id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  tenantId String @db.Uuid @map("tenant_id")
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  day DateTime @db.Date
+
+  activeUsers      Int     @default(0) @map("active_users")
+  contactCount     Int     @default(0) @map("contact_count")
+  messagesIn       Int     @default(0) @map("messages_in")
+  messagesOut      Int     @default(0) @map("messages_out")
+  aiTokensIn       Int     @default(0) @map("ai_tokens_in")
+  aiTokensOut      Int     @default(0) @map("ai_tokens_out")
+  aiCostUsd        Decimal @default(0) @db.Decimal(10, 4) @map("ai_cost_usd")
+  workflowRuns     Int     @default(0) @map("workflow_runs")
+  documentsIssued  Int     @default(0) @map("documents_issued")
+  storageMb        Int     @default(0) @map("storage_mb")
+  apiCalls         Int     @default(0) @map("api_calls")
+
+  @@unique([tenantId, day])
+  @@index([day])
+  @@map("tenant_usage")
+}
+
+/// Operadores de la plataforma. Tabla aparte de `User` a propósito: un
+/// superadmin no es un usuario con una bandera, es una entidad distinta con
+/// otro ciclo de vida, otro login y 2FA obligatorio.
+model PlatformAdmin {
+  id           String  @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  email        String  @unique @db.VarChar(255)
+  passwordHash String @map("password_hash")
+  name         String  @db.VarChar(120)
+
+  totpSecret     String? @map("totp_secret") // cifrado AES-256-GCM en la capa de aplicación
+  totpEnabled    Boolean @default(false) @map("totp_enabled")
+  recoveryCodes  String[] @map("recovery_codes") // hashes, de un solo uso
+
+  lastLoginAt DateTime? @db.Timestamptz(6) @map("last_login_at")
+  lastLoginIp String?   @db.Inet @map("last_login_ip")
+  disabledAt  DateTime? @db.Timestamptz(6) @map("disabled_at")
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
+  updatedAt DateTime @updatedAt @db.Timestamptz(6) @map("updated_at")
+
+  @@map("platform_admin")
+}
+
+// ============================================================================
+//  DOMINIO 2 · IDENTIDAD Y ACCESO
+// ============================================================================
+
+/// Una persona. Puede pertenecer a varias empresas: `User` no lleva `tenantId`.
+/// La relación con la empresa vive en `Membership`.
+model User {
+  id           String  @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  email        String  @unique @db.VarChar(255)
+  passwordHash String? @map("password_hash")
+  name         String  @db.VarChar(120)
+  avatarUrl    String? @map("avatar_url")
+  phone        String? @db.VarChar(32)
+  locale       String  @default("es") @db.VarChar(10)
+  timezone     String? @db.VarChar(64)
+
+  status          UserStatus @default(PENDING_VERIFICATION)
+  emailVerifiedAt DateTime?  @db.Timestamptz(6) @map("email_verified_at")
+
+  totpEnabled   Boolean  @default(false) @map("totp_enabled")
+  recoveryCodes String[] @map("recovery_codes") // hashes Argon2 de un solo uso
+
+  lastLoginAt DateTime? @db.Timestamptz(6) @map("last_login_at")
+  lastLoginIp String?   @db.Inet @map("last_login_ip")
+
+  /// Intentos fallidos consecutivos. El bloqueo real lo hace el limitador de
+  /// tasa en Redis; esto es para mostrárselo al usuario y auditarlo.
+  failedLoginAttempts Int       @default(0) @map("failed_login_attempts")
+  lockedUntil         DateTime? @db.Timestamptz(6) @map("locked_until")
+
+  /// Preferencias de interfaz: tema, densidad de tabla, columnas visibles.
+  preferences Json @default("{}") @db.JsonB
+
+  createdAt DateTime  @default(now()) @db.Timestamptz(6) @map("created_at")
+  updatedAt DateTime  @updatedAt @db.Timestamptz(6) @map("updated_at")
+  deletedAt DateTime? @db.Timestamptz(6) @map("deleted_at")
+
+  memberships   Membership[]
+  refreshTokens RefreshToken[]
+  totp          TotpSecret?
+  emailTokens   EmailToken[]
+  notifications Notification[]
+
+  ownedContacts      Contact[]      @relation("ContactOwner")
+  ownedDeals         Deal[]         @relation("DealOwner")
+  assignedConvos     Conversation[] @relation("ConversationAssignee")
+  assignedTasks      Task[]         @relation("TaskAssignee")
+  createdTasks       Task[]         @relation("TaskCreator")
+  authoredNotes      Note[]
+  authoredActivities Activity[]
+  organizedEvents    Event[]        @relation("EventOrganizer")
+  uploadedFiles      File[]
+  aiThreads          AiThread[]
+  availability       Availability[]
+
+  @@index([status])
+  @@index([deletedAt])
+  @@map("user")
+}
+
+enum UserStatus {
+  PENDING_VERIFICATION
+  ACTIVE
+  DISABLED
+}
+
+/// La pertenencia de un usuario a una empresa, con su rol.
+/// Es la tabla que el guard de tenant consulta en CADA petición (cacheada).
+model Membership {
+  id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  tenantId String @db.Uuid @map("tenant_id")
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId   String @db.Uuid @map("user_id")
+  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  roleId String @db.Uuid @map("role_id")
+  role   Role   @relation(fields: [roleId], references: [id])
+
+  status MembershipStatus @default(INVITED)
+
+  /// Equipo al que pertenece. Determina el alcance "su equipo" del rol MANAGER.
+  teamName String? @db.VarChar(80) @map("team_name")
+
+  invitedByUserId String?   @db.Uuid @map("invited_by_user_id")
+  invitedAt       DateTime  @default(now()) @db.Timestamptz(6) @map("invited_at")
+  acceptedAt      DateTime? @db.Timestamptz(6) @map("accepted_at")
+  disabledAt      DateTime? @db.Timestamptz(6) @map("disabled_at")
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
+  updatedAt DateTime @updatedAt @db.Timestamptz(6) @map("updated_at")
+
+  @@unique([tenantId, userId])
+  @@index([tenantId, status])
+  @@index([userId, status])
+  @@map("membership")
+}
+
+enum MembershipStatus {
+  INVITED
+  ACTIVE
+  DISABLED
+}
+
+/// Rol dentro de una empresa. Los cinco del sistema se crean con cada empresa
+/// (`isSystem = true`, no editables); los planes altos pueden crear más.
+model Role {
+  id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  tenantId String @db.Uuid @map("tenant_id")
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  key         SystemRole
+  name        String     @db.VarChar(80)
+  description String?
+  isSystem    Boolean    @default(false) @map("is_system")
+
+  memberships Membership[]
+  permissions RolePermission[]
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
+  updatedAt DateTime @updatedAt @db.Timestamptz(6) @map("updated_at")
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@map("role")
+}
+
+enum SystemRole {
+  OWNER
+  ADMIN
+  MANAGER
+  AGENT
+  VIEWER
+  CUSTOM
+}
+
+/// Un permiso concedido a un rol. `permission` es la cadena granular
+/// ("contact:read", "deal:delete", "billing:manage") y `scope` responde a
+/// "¿sobre qué filas?" — la distinción entre un Manager y un Agente.
+model RolePermission {
+  id     String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  roleId String @db.Uuid @map("role_id")
+  role   Role   @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  permission String          @db.VarChar(64)
+  scope      PermissionScope @default(ALL)
+
+  @@unique([roleId, permission])
+  @@index([roleId])
+  @@map("role_permission")
+}
+
+enum PermissionScope {
+  ALL // toda la empresa
+  TEAM // registros de su equipo
+  OWN // sólo los que le pertenecen
+}
+
+/// Familia de tokens de refresco. La rotación con detección de reuso vive aquí:
+/// si llega un token ya consumido, se revoca toda la familia.
+model RefreshToken {
+  id     String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  userId String @db.Uuid @map("user_id")
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// SHA-256 del token. El valor en claro sólo existe en la cookie del cliente.
+  tokenHash String @unique @db.VarChar(64) @map("token_hash")
+
+  /// Identificador de familia: todos los tokens nacidos de un mismo login.
+  familyId String @db.Uuid @map("family_id")
+
+  /// Empresa activa cuando se emitió. Cambiar de espacio emite un token nuevo.
+  tenantId String? @db.Uuid @map("tenant_id")
+
+  userAgent String? @map("user_agent")
+  ip        String? @db.Inet
+
+  expiresAt DateTime  @db.Timestamptz(6) @map("expires_at")
+  usedAt    DateTime? @db.Timestamptz(6) @map("used_at")
+  revokedAt DateTime? @db.Timestamptz(6) @map("revoked_at")
+  revokedReason String? @db.VarChar(60) @map("revoked_reason") // "rotation" | "reuse_detected" | "logout" | "password_change"
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
+
+  @@index([userId, revokedAt])
+  @@index([familyId])
+  @@index([expiresAt])
+  @@map("refresh_token")
+}
+
+model TotpSecret {
+  id     String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  userId String @unique @db.Uuid @map("user_id")
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Cifrado con AES-256-GCM. La clave maestra vive fuera de la base de datos.
+  secretEncrypted String @map("secret_encrypted")
+  confirmedAt     DateTime? @db.Timestamptz(6) @map("confirmed_at")
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
+
+  @@map("totp_secret")
+}
+
+/// Tokens de un solo uso: verificación de correo, recuperación de contraseña
+/// e invitaciones. Una tabla en vez de tres porque el ciclo de vida es idéntico.
+model EmailToken {
+  id     String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  userId String @db.Uuid @map("user_id")
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  tokenHash String         @unique @db.VarChar(64) @map("token_hash")
+  purpose   EmailTokenPurpose
+
+  /// Contexto extra: para invitaciones, la empresa y el rol propuestos.
+  payload Json? @db.JsonB
+
+  expiresAt DateTime  @db.Timestamptz(6) @map("expires_at")
+  usedAt    DateTime? @db.Timestamptz(6) @map("used_at")
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
+
+  @@index([userId, purpose])
+  @@index([expiresAt])
+  @@map("email_token")
+}
+
+enum EmailTokenPurpose {
+  EMAIL_VERIFICATION
+  PASSWORD_RESET
+  INVITATION
+  EMAIL_CHANGE
+}
+
+/// Claves de la API pública, por empresa.
+model ApiKey {
+  id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  tenantId String @db.Uuid @map("tenant_id")
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  name      String  @db.VarChar(80)
+  /// Prefijo visible para que el usuario identifique la clave sin revelarla.
+  prefix    String  @unique @db.VarChar(16)
+  keyHash   String  @unique @db.VarChar(64) @map("key_hash")
+  scopes    String[]
+
+  lastUsedAt DateTime? @db.Timestamptz(6) @map("last_used_at")
+  expiresAt  DateTime? @db.Timestamptz(6) @map("expires_at")
+  revokedAt  DateTime? @db.Timestamptz(6) @map("revoked_at")
+
+  createdByUserId String? @db.Uuid @map("created_by_user_id")
+  createdAt       DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
+
+  @@index([tenantId, revokedAt])
+  @@map("api_key")
+}
+
+/// Registro inmutable. Se escribe desde el worker vía cola para no penalizar
+/// la petición del usuario. Particionado por mes en la migración.
+model AuditLog {
+  id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  tenantId String @db.Uuid @map("tenant_id")
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  actorUserId  String?  @db.Uuid @map("actor_user_id")
+  actorEmail   String?  @db.VarChar(255) @map("actor_email")
+  actorType    ActorType @default(USER) @map("actor_type")
+
+  action       AuditAction
+  resourceType String      @db.VarChar(60) @map("resource_type")
+  resourceId   String?     @db.Uuid @map("resource_id")
+  resourceLabel String?    @db.VarChar(200) @map("resource_label")
+
+  /// Diferencia de valores { campo: { antes, despues } }. Campos sensibles
+  /// redactados por el serializador antes de llegar aquí.
+  changes Json? @db.JsonB
+
+  ip        String? @db.Inet
+  userAgent String? @map("user_agent")
+  traceId   String? @db.VarChar(40) @map("trace_id")
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
+
+  @@index([tenantId, createdAt(sort: Desc)])
+  @@index([tenantId, resourceType, resourceId])
+  @@index([tenantId, actorUserId, createdAt(sort: Desc)])
+  @@map("audit_log")
+}
+
+enum ActorType {
+  USER
+  API_KEY
+  SYSTEM
+  AUTOMATION
+  SUPPORT // suplantación con consentimiento
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  RESTORE
+  LOGIN
+  LOGIN_FAILED
+  LOGOUT
+  PASSWORD_CHANGE
+  TWO_FACTOR_ENABLE
+  TWO_FACTOR_DISABLE
+  EXPORT
+  IMPORT
+  INVITE
+  ROLE_CHANGE
+  IMPERSONATE_START
+  IMPERSONATE_END
+  SETTINGS_CHANGE
+  SEND
+}
+
+// ============================================================================
+//  DOMINIO 3 · CRM
+// ============================================================================
+
+/// Cuenta / organización cliente. Distinta de `Tenant`: Tenant es quien usa
+/// Nexo, Company es a quién le vende.
+model Company {
+  id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  tenantId String @db.Uuid @map("tenant_id")
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  name     String  @db.VarChar(200)
+  legalName String? @db.VarChar(200) @map("legal_name")
+  taxId    String? @db.VarChar(40) @map("tax_id")
+  industry String? @db.VarChar(80)
+  size     String? @db.VarChar(40)
+  website  String?
+  phone    String? @db.VarChar(32)
+  email    String? @db.VarChar(255)
+
+  addressLine String? @map("address_line")
+  city        String? @db.VarChar(120)
+  state       String? @db.VarChar(120)
+  postalCode  String? @db.VarChar(20) @map("postal_code")
+  country     String? @db.Char(2)
+
+  custom Json @default("{}") @db.JsonB
+
+  contacts  Contact[]
+  deals     Deal[]
+  documents Document[]
+
+  createdAt DateTime  @default(now()) @db.Timestamptz(6) @map("created_at")
+  updatedAt DateTime  @updatedAt @db.Timestamptz(6) @map("updated_at")
+  deletedAt DateTime? @db.Timestamptz(6) @map("deleted_at")
+
+  @@index([tenantId, deletedAt])
+  @@index([tenantId, name])
+  @@map("company")
+}
+
+/// La persona con la que se habla. Entidad central del CRM.
+model Contact {
+  id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  tenantId String @db.Uuid @map("tenant_id")
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  firstName String  @db.VarChar(80) @map("first_name")
+  lastName  String? @db.VarChar(80) @map("last_name")
+  /// La calcula un trigger BEFORE a partir de firstName + lastName; el valor
+  /// que mande la aplicación se ignora. Por eso lleva default: para que crear
+  /// un contacto no obligue a componerlo en el cliente.
+  fullName  String  @default("") @db.VarChar(165) @map("full_name")
+
+  jobTitle String? @db.VarChar(120) @map("job_title")
+
+  companyId String?  @db.Uuid @map("company_id")
+  company   Company? @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  /// Nombre de empresa libre, para contactos sin cuenta formal creada.
+  companyName String? @db.VarChar(200) @map("company_name")
+
+  email String? @db.VarChar(255)
+  /// SIEMPRE normalizado a E.164 (+593987654321). La deduplicación de la
+  /// importación y el emparejamiento de WhatsApp dependen de esta invariante.
+  phoneE164   String? @db.VarChar(20) @map("phone_e164")
+  whatsappE164 String? @db.VarChar(20) @map("whatsapp_e164")
+
+  addressLine String? @map("address_line")
+  city        String? @db.VarChar(120)
+  state       String? @db.VarChar(120)
+  postalCode  String? @db.VarChar(20) @map("postal_code")
+  country     String? @db.Char(2)
+
+  lifecycleStage LifecycleStage @default(LEAD) @map("lifecycle_stage")
+  source         String?        @db.VarChar(80) // "whatsapp" | "import" | "web" | "manual" | "api"
+
+  ownerId String? @db.Uuid @map("owner_id")
+  owner   User?   @relation("ContactOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+
+  /// Valores de los campos que la empresa definió en `CustomField`.
+  /// jsonb + índice GIN en vez de EAV: se filtra con operadores nativos.
+  custom Json @default("{}") @db.JsonB
+
+  /// Columna tsvector generada en la migración (Prisma no la expresa).
+  /// Índice GIN + trigram sobre fullName y phoneE164.
+  searchVector Unsupported("tsvector")? @map("search_vector")
+
+  lastActivityAt DateTime? @db.Timestamptz(6) @map("last_activity_at")
+  lastContactedAt DateTime? @db.Timestamptz(6) @map("last_contacted_at")
+
+  tags          ContactTag[]
+  deals         Deal[]
+  conversations Conversation[]
+  identities    ContactIdentity[]
+  notes         Note[]
+  activities    Activity[]
+  tasks         Task[]
+  documents     Document[]
+  fieldValues   CustomFieldValue[]
+  enrollments   WorkflowEnrollment[]
+  eventLinks    Event[]
+
+  createdAt DateTime  @default(now()) @db.Timestamptz(6) @map("created_at")
+  updatedAt DateTime  @updatedAt @db.Timestamptz(6) @map("updated_at")
+  deletedAt DateTime? @db.Timestamptz(6) @map("deleted_at")
+
+  @@index([tenantId, deletedAt, createdAt(sort: Desc)])
+  @@index([tenantId, ownerId])
+  @@index([tenantId, companyId])
+  @@index([tenantId, lifecycleStage])
+  @@index([tenantId, lastActivityAt(sort: Desc)])
+  // La unicidad de correo y teléfono NO se declara aquí: debe ignorar los
+  // contactos borrados (borrar a juan@x.com tiene que permitir recrearlo) y
+  // eso exige un índice PARCIAL, que Prisma no expresa. Vive en
+  // sql/02_search_and_indexes.sql · contact_tenant_{email,phone}_live_key.
+  @@map("contact")
+}
+
+enum LifecycleStage {
+  LEAD
+  PROSPECT
+  CUSTOMER
+  EVANGELIST
+  CHURNED
+  OTHER
+}
+
+model Tag {
+  id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  tenantId String @db.Uuid @map("tenant_id")
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  name  String @db.VarChar(60)
+  color String @default("#6B7280") @db.VarChar(9)
+
+  contacts ContactTag[]
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@map("tag")
+}
+
+model ContactTag {
+  contactId String  @db.Uuid @map("contact_id")
+  contact   Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  tagId     String  @db.Uuid @map("tag_id")
+  tag       Tag     @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  tenantId  String  @db.Uuid @map("tenant_id")
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
+
+  @@id([contactId, tagId])
+  @@index([tagId])
+  @@index([tenantId])
+  @@map("contact_tag")
+}
+
+/// Definición de un campo personalizado: tipo, etiqueta, opciones.
+/// Valida las escrituras y dibuja el formulario.
+model CustomField {
+  id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  tenantId String @db.Uuid @map("tenant_id")
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  entity EntityType
+  /// Clave dentro del jsonb `custom`. Inmutable una vez creada.
+  key    String     @db.VarChar(50)
+  label  String     @db.VarChar(80)
+  type   FieldType
+
+  options    Json?   @db.JsonB // para SELECT y MULTISELECT
+  required   Boolean @default(false)
+  helpText   String? @map("help_text")
+  sortOrder  Int     @default(0) @map("sort_order")
+  showInList Boolean @default(false) @map("show_in_list")
+
+  values CustomFieldValue[]
+
+  createdAt DateTime  @default(now()) @db.Timestamptz(6) @map("created_at")
+  updatedAt DateTime  @updatedAt @db.Timestamptz(6) @map("updated_at")
+  archivedAt DateTime? @db.Timestamptz(6) @map("archived_at")
+
+  @@unique([tenantId, entity, key])
+  @@index([tenantId, entity, sortOrder])
+  @@map("custom_field")
+}
+
+enum EntityType {
+  CONTACT
+  COMPANY
+  DEAL
+  TASK
+}
+
+enum FieldType {
+  TEXT
+  TEXTAREA
+  NUMBER
+  CURRENCY
+  DATE
+  DATETIME
+  BOOLEAN
+  SELECT
+  MULTISELECT
+  EMAIL
+  PHONE
+  URL
+  USER
+}
+
+/// Índice invertido de los valores personalizados. El dato vivo está en el
+/// jsonb de la entidad; esta tabla existe para poder ordenar y agregar por un
+/// campo concreto sin escanear el jsonb de toda la tabla.
+model CustomFieldValue {
+  id       String      @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  tenantId String      @db.Uuid @map("tenant_id")
+  fieldId  String      @db.Uuid @map("field_id")
+  field    CustomField @relation(fields: [fieldId], references: [id], onDelete: Cascade)
+
+  contactId String?  @db.Uuid @map("contact_id")
+  contact   Contact? @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  dealId    String?  @db.Uuid @map("deal_id")
+  deal      Deal?    @relation(fields: [dealId], references: [id], onDelete: Cascade)
+
+  valueText   String? @map("value_text")
+  valueNumber Decimal?  @db.Decimal(18, 4) @map("value_number")
+  valueDate   DateTime? @db.Timestamptz(6) @map("value_date")
+  valueBool   Boolean? @map("value_bool")
+
+  updatedAt DateTime @updatedAt @db.Timestamptz(6) @map("updated_at")
+
+  @@unique([fieldId, contactId])
+  @@unique([fieldId, dealId])
+  @@index([tenantId, fieldId, valueText])
+  @@index([tenantId, fieldId, valueNumber])
+  @@map("custom_field_value")
+}
+
+model Note {
+  id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  tenantId String @db.Uuid @map("tenant_id")
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  body String @db.Text
+
+  contactId String?  @db.Uuid @map("contact_id")
+  contact   Contact? @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  dealId    String?  @db.Uuid @map("deal_id")
+  deal      Deal?    @relation(fields: [dealId], references: [id], onDelete: Cascade)
+
+  authorId String? @db.Uuid @map("author_id")
+  author   User?   @relation(fields: [authorId], references: [id], onDelete: SetNull)
+
+  /// Menciones a usuarios, para notificarles.
+  mentions String[] @db.Uuid
+
+  pinned Boolean @default(false)
+
+  createdAt DateTime  @default(now()) @db.Timestamptz(6) @map("created_at")
+  updatedAt DateTime  @updatedAt @db.Timestamptz(6) @map("updated_at")
+  deletedAt DateTime? @db.Timestamptz(6) @map("deleted_at")
+
+  @@index([tenantId, contactId, createdAt(sort: Desc)])
+  @@index([tenantId, dealId, createdAt(sort: Desc)])
+  @@map("note")
+}
+
+/// Timeline unificada. La escriben los suscriptores del bus de eventos, no
+/// cada módulo a mano: por eso un módulo nuevo aparece en la ficha del
+/// contacto sin tocar este código.
+model Activity {
+  id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  tenantId String @db.Uuid @map("tenant_id")
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  type ActivityType
+
+  /// Referencia polimórfica al objeto que originó la actividad.
+  subjectType String  @db.VarChar(40) @map("subject_type")
+  subjectId   String? @db.Uuid @map("subject_id")
+
+  contactId String?  @db.Uuid @map("contact_id")
+  contact   Contact? @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  dealId    String?  @db.Uuid @map("deal_id")
+  deal      Deal?    @relation(fields: [dealId], references: [id], onDelete: Cascade)
+
+  actorId String? @db.Uuid @map("actor_id")
+  actor   User?   @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  actorType ActorType @default(USER) @map("actor_type")
+
+  title   String  @db.VarChar(200)
+  summary String?
+  /// Carga útil específica del tipo: etapa anterior y nueva, importe, etc.
+  payload Json?   @db.JsonB
+
+  occurredAt DateTime @default(now()) @db.Timestamptz(6) @map("occurred_at")
+
+  @@index([tenantId, contactId, occurredAt(sort: Desc)])
+  @@index([tenantId, dealId, occurredAt(sort: Desc)])
+  @@index([tenantId, type, occurredAt(sort: Desc)])
+  @@map("activity")
+}
+
+enum ActivityType {
+  NOTE
+  CALL
+  EMAIL
+  WHATSAPP
+  MEETING
+  TASK
+  STAGE_CHANGE
+  FIELD_CHANGE
+  DOCUMENT
+  PAYMENT
+  AUTOMATION
+  AI
+  SYSTEM
+}
+
+// ============================================================================
+//  DOMINIO 4 · VENTAS
+// ============================================================================
+
+model Pipeline {
+  id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  tenantId String @db.Uuid @map("tenant_id")
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  name      String  @db.VarChar(80)
+  isDefault Boolean @default(false) @map("is_default")
+  sortOrder Int     @default(0) @map("sort_order")
+
+  stages PipelineStage[]
+  deals  Deal[]
+
+  createdAt DateTime  @default(now()) @db.Timestamptz(6) @map("created_at")
+  updatedAt DateTime  @updatedAt @db.Timestamptz(6) @map("updated_at")
+  archivedAt DateTime? @db.Timestamptz(6) @map("archived_at")
+
+  @@unique([tenantId, name])
+  @@index([tenantId, archivedAt])
+  @@map("pipeline")
+}
+
+/// Las siete etapas por defecto (Nuevo → Ganado/Perdido) se crean con cada
+/// empresa, pero son editables: cada negocio tiene su propio embudo.
+model PipelineStage {
+  id         String   @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  tenantId   String   @db.Uuid @map("tenant_id")
+  pipelineId String   @db.Uuid @map("pipeline_id")
+  pipeline   Pipeline @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
+
+  name  String    @db.VarChar(60)
+  type  StageType @default(OPEN)
+  color String    @default("#6B7280") @db.VarChar(9)
+
+  /// Probabilidad por defecto al entrar en la etapa. La previsión ponderada
+  /// usa la del trato, no ésta; ésta sólo la precarga.
+  probability Int @default(0)
+
+  position Float @default(1000)
+
+  /// Días tras los cuales un trato en esta etapa se marca como estancado.
+  rottingDays Int? @map("rotting_days")
+
+  deals   Deal[]
+  history DealStageHistory[]
+
+  @@unique([pipelineId, name])
+  @@index([tenantId, pipelineId, position])
+  @@map("pipeline_stage")
+}
+
+enum StageType {
+  OPEN
+  WON
+  LOST
+}
+
+model Deal {
+  id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  tenantId String @db.Uuid @map("tenant_id")
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  title String @db.VarChar(200)
+
+  pipelineId String   @db.Uuid @map("pipeline_id")
+  pipeline   Pipeline @relation(fields: [pipelineId], references: [id], onDelete: Restrict)
+  stageId    String   @db.Uuid @map("stage_id")
+  stage      PipelineStage @relation(fields: [stageId], references: [id], onDelete: Restrict)
+
+  contactId String?  @db.Uuid @map("contact_id")
+  contact   Contact? @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  companyId String?  @db.Uuid @map("company_id")
+  company   Company? @relation(fields: [companyId], references: [id], onDelete: SetNull)
+
+  ownerId String? @db.Uuid @map("owner_id")
+  owner   User?   @relation("DealOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+
+  value       Decimal @default(0) @db.Decimal(14, 2)
+  currency    String  @default("USD") @db.Char(3)
+  probability Int     @default(0)
+
+  status         DealStatus @default(OPEN)
+  expectedCloseAt DateTime? @db.Date @map("expected_close_at")
+  closedAt        DateTime? @db.Timestamptz(6) @map("closed_at")
+
+  lostReasonId   String?     @db.Uuid @map("lost_reason_id")
+  lostReason     LostReason? @relation(fields: [lostReasonId], references: [id], onDelete: SetNull)
+  lostReasonNote String? @map("lost_reason_note")
+
+  /// Orden fraccional dentro de la columna del Kanban. Mover una tarjeta
+  /// escribe UNA fila: se toma el punto medio entre sus dos vecinas y sólo se
+  /// reequilibra la columna cuando el hueco se agota.
+  position Float @default(1000)
+
+  source String? @db.VarChar(80)
+  custom Json    @default("{}") @db.JsonB
+
+  /// Desnormalizado desde `deal_item` para poder ordenar y sumar sin join.
+  itemsTotal Decimal @default(0) @db.Decimal(14, 2) @map("items_total")
+
+  stageEnteredAt DateTime @default(now()) @db.Timestamptz(6) @map("stage_entered_at")
+  lastActivityAt DateTime? @db.Timestamptz(6) @map("last_activity_at")
+
+  items        DealItem[]
+  stageHistory DealStageHistory[]
+  notes        Note[]
+  activities   Activity[]
+  tasks        Task[]
+  documents    Document[]
+  fieldValues  CustomFieldValue[]
+  events       Event[]
+
+  createdAt DateTime  @default(now()) @db.Timestamptz(6) @map("created_at")
+  updatedAt DateTime  @updatedAt @db.Timestamptz(6) @map("updated_at")
+  deletedAt DateTime? @db.Timestamptz(6) @map("deleted_at")
+
+  @@index([tenantId, pipelineId, stageId, position])
+  @@index([tenantId, ownerId, status])
+  @@index([tenantId, status, expectedCloseAt])
+  @@index([tenantId, contactId])
+  @@index([tenantId, deletedAt])
+  @@map("deal")
+}
+
+enum DealStatus {
+  OPEN
+  WON
+  LOST
+}
+
+/// Cada movimiento entre etapas, con su duración. Sin esta tabla escribiéndose
+/// desde el primer día, la métrica "tiempo medio en negociación" no existe
+/// jamás — no se puede reconstruir a posteriori.
+model DealStageHistory {
+  id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  tenantId String @db.Uuid @map("tenant_id")
+  dealId   String @db.Uuid @map("deal_id")
+  deal     Deal   @relation(fields: [dealId], references: [id], onDelete: Cascade)
+
+  stageId     String        @db.Uuid @map("stage_id")
+  stage       PipelineStage @relation(fields: [stageId], references: [id], onDelete: Cascade)
+  fromStageId String?       @db.Uuid @map("from_stage_id")
+
+  movedByUserId String? @db.Uuid @map("moved_by_user_id")
+  movedByType   ActorType @default(USER) @map("moved_by_type")
+
+  enteredAt DateTime  @default(now()) @db.Timestamptz(6) @map("entered_at")
+  exitedAt  DateTime? @db.Timestamptz(6) @map("exited_at")
+  /// Calculado al salir. Redundante con las fechas, pero evita aritmética de
+  /// intervalos en cada consulta del panel comercial.
+  durationSeconds Int? @map("duration_seconds")
+
+  @@index([tenantId, dealId, enteredAt])
+  @@index([tenantId, stageId, enteredAt])
+  @@map("deal_stage_history")
+}
+
+model Product {
+  id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  tenantId String @db.Uuid @map("tenant_id")
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  sku         String? @db.VarChar(60)
+  name        String  @db.VarChar(200)
+  description String?
+
+  unitPrice Decimal @default(0) @db.Decimal(14, 2) @map("unit_price")
+  currency  String  @default("USD") @db.Char(3)
+  unit      String  @default("unidad") @db.VarChar(30)
+
+  taxRateId String?  @db.Uuid @map("tax_rate_id")
+  taxRate   TaxRate? @relation(fields: [taxRateId], references: [id], onDelete: SetNull)
+
+  active Boolean @default(true)
+
+  dealItems     DealItem[]
+  documentItems DocumentItem[]
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
+  updatedAt DateTime @updatedAt @db.Timestamptz(6) @map("updated_at")
+
+  @@unique([tenantId, sku])
+  @@index([tenantId, active, name])
+  @@map("product")
+}
+
+model DealItem {
+  id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  tenantId String @db.Uuid @map("tenant_id")
+  dealId   String @db.Uuid @map("deal_id")
+  deal     Deal   @relation(fields: [dealId], references: [id], onDelete: Cascade)
+
+  productId String?  @db.Uuid @map("product_id")
+  product   Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  /// Copia del nombre y precio en el momento de añadirlo: si el producto
+  /// cambia de precio mañana, el trato de ayer no se reescribe solo.
+  name      String  @db.VarChar(200)
+  quantity  Decimal @default(1) @db.Decimal(12, 3)
+  unitPrice Decimal @db.Decimal(14, 2) @map("unit_price")
+  discount  Decimal @default(0) @db.Decimal(5, 2) // porcentaje
+  total     Decimal @db.Decimal(14, 2)
+
+  sortOrder Int @default(0) @map("sort_order")
+
+  @@index([tenantId, dealId])
+  @@map("deal_item")
+}
+
+model LostReason {
+  id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  tenantId String @db.Uuid @map("tenant_id")
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  name      String  @db.VarChar(120)
+  sortOrder Int     @default(0) @map("sort_order")
+  active    Boolean @default(true)
+
+  deals Deal[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId, active])
+  @@map("lost_reason")
+}
+
+// ============================================================================
+//  DOMINIO 5 · CONVERSACIONES
+//  Modelado genérico por canal desde el principio: añadir Instagram o correo
+//  en el roadmap es integración, no migración.
+// ============================================================================
+
+model Channel {
+  id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  tenantId String @db.Uuid @map("tenant_id")
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  type   ChannelType
+  name   String        @db.VarChar(80)
+  status ChannelStatus @default(PENDING)
+
+  /// Identificador del canal en el proveedor. Para WhatsApp Cloud es el
+  /// phone_number_id de Meta: es lo que permite resolver a qué empresa
+  /// pertenece un webhook entrante.
+  externalId String? @db.VarChar(120) @map("external_id")
+  /// Número en E.164, para mostrar.
+  displayId  String? @db.VarChar(40) @map("display_id")
+
+  /// Credenciales cifradas con AES-256-GCM. NUNCA vuelven al cliente, ni
+  /// enmascaradas desde la BD: la interfaz muestra sólo los últimos 4.
+  credentialsEncrypted String? @map("credentials_encrypted")
+  /// Secreto de verificación del webhook, también cifrado.
+  webhookSecretEncrypted String? @map("webhook_secret_encrypted")
+
+  config Json @default("{}") @db.JsonB
+
+  lastErrorAt      DateTime? @db.Timestamptz(6) @map("last_error_at")
+  lastErrorMessage String? @map("last_error_message")
+  connectedAt      DateTime? @db.Timestamptz(6) @map("connected_at")
+
+  conversations Conversation[]
+  templates     WaTemplate[]
+  messages      Message[]
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
+  updatedAt DateTime @updatedAt @db.Timestamptz(6) @map("updated_at")
+
+  @@unique([type, externalId], map: "channel_provider_identity_key")
+  @@index([tenantId, type, status])
+  @@map("channel")
+}
+
+enum ChannelType {
+  WHATSAPP_CLOUD
+  EMAIL
+  SMS
+  INSTAGRAM
+  MESSENGER
+  WEBCHAT
+}
+
+enum ChannelStatus {
+  PENDING
+  CONNECTED
+  ERROR
+  DISABLED
+}
+
+/// Identidad de un contacto en un canal concreto (su número de WhatsApp, su
+/// usuario de Instagram). Permite que un contacto tenga varias y que un
+/// mensaje entrante encuentre a su persona.
+model ContactIdentity {
+  id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  tenantId String @db.Uuid @map("tenant_id")
+
+  contactId String  @db.Uuid @map("contact_id")
+  contact   Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  type ChannelType
+  /// Para WhatsApp: el wa_id que devuelve Meta, en E.164 sin el '+'.
+  value String @db.VarChar(120)
+
+  verified Boolean @default(false)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
+
+  @@unique([tenantId, type, value])
+  @@index([tenantId, contactId])
+  @@map("contact_identity")
+}
+
+model Conversation {
+  id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  tenantId String @db.Uuid @map("tenant_id")
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  channelId String  @db.Uuid @map("channel_id")
+  channel   Channel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+
+  contactId String  @db.Uuid @map("contact_id")
+  contact   Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  status ConversationStatus @default(OPEN)
+
+  assigneeId String? @db.Uuid @map("assignee_id")
+  assignee   User?   @relation("ConversationAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+
+  /// La ventana de 24 h de Meta. Fuera de ella sólo se pueden enviar
+  /// plantillas aprobadas. La interfaz lee esto para bloquear el envío libre
+  /// ANTES de que el agente escriba, no después del rechazo de la API.
+  windowExpiresAt DateTime? @db.Timestamptz(6) @map("window_expires_at")
+
+  /// Desnormalizados para pintar la lista de la bandeja sin un join por fila.
+  lastMessageAt      DateTime? @db.Timestamptz(6) @map("last_message_at")
+  lastMessagePreview String?   @db.VarChar(200) @map("last_message_preview")
+  lastMessageDirection MessageDirection? @map("last_message_direction")
+  unreadCount        Int       @default(0) @map("unread_count")
+
+  /// Silenciar la respuesta automática de IA en esta conversación concreta.
+  aiEnabled Boolean @default(true) @map("ai_enabled")
+
+  snoozedUntil DateTime? @db.Timestamptz(6) @map("snoozed_until")
+  resolvedAt   DateTime? @db.Timestamptz(6) @map("resolved_at")
+
+  messages  Message[]
+  aiThreads AiThread[]
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
+  updatedAt DateTime @updatedAt @db.Timestamptz(6) @map("updated_at")
+
+  @@unique([channelId, contactId])
+  @@index([tenantId, status, lastMessageAt(sort: Desc)])
+  @@index([tenantId, assigneeId, status])
+  @@index([tenantId, contactId])
+  @@map("conversation")
+}
+
+enum ConversationStatus {
+  OPEN
+  PENDING
+  RESOLVED
+  SNOOZED
+}
+
+/// La tabla que más crece del sistema. Particionada por rango mensual sobre
+/// `createdAt` en la migración.
+model Message {
+  id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  tenantId String @db.Uuid @map("tenant_id")
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  conversationId String       @db.Uuid @map("conversation_id")
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  channelId      String       @db.Uuid @map("channel_id")
+  channel        Channel      @relation(fields: [channelId], references: [id], onDelete: Cascade)
+
+  direction MessageDirection
+  type      MessageType      @default(TEXT)
+
+  body String? @db.Text
+
+  /// Id del mensaje en el proveedor (wamid de Meta). Único por canal: es la
+  /// defensa contra los reintentos de webhook, que SÍ ocurren.
+  externalId String? @db.VarChar(160) @map("external_id")
+
+  status MessageDeliveryStatus @default(QUEUED)
+  statusUpdatedAt DateTime?    @db.Timestamptz(6) @map("status_updated_at")
+  errorCode    String?         @db.VarChar(40) @map("error_code")
+  errorMessage String? @map("error_message")
+
+  /// Quién lo envió: un agente, la IA, una automatización o el contacto.
+  senderUserId String?   @db.Uuid @map("sender_user_id")
+  senderType   ActorType @default(USER) @map("sender_type")
+
+  /// Nota interna: visible para el equipo, nunca enviada al contacto.
+  isInternal Boolean @default(false) @map("is_internal")
+
+  templateId String?     @db.Uuid @map("template_id")
+  template   WaTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  /// Variables con las que se rellenó la plantilla.
+  templateParams Json? @db.JsonB @map("template_params")
+
+  /// Mensaje al que responde, si es una respuesta citada.
+  replyToExternalId String? @db.VarChar(160) @map("reply_to_external_id")
+
+  /// Carga cruda del proveedor, para depurar sin pedirle capturas al cliente.
+  rawPayload Json? @db.JsonB @map("raw_payload")
+
+  media MessageMedia[]
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
+
+  @@unique([channelId, externalId], map: "message_channel_external_key")
+  @@index([tenantId, conversationId, createdAt(sort: Desc)])
+  @@index([tenantId, status, createdAt])
+  @@index([conversationId, createdAt(sort: Desc)])
+  @@map("message")
+}
+
+enum MessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum MessageType {
+  TEXT
+  IMAGE
+  AUDIO
+  VIDEO
+  DOCUMENT
+  STICKER
+  LOCATION
+  CONTACTS
+  TEMPLATE
+  INTERACTIVE
+  REACTION
+  SYSTEM
+}
+
+enum MessageDeliveryStatus {
+  QUEUED
+  SENT
+  DELIVERED
+  READ
+  FAILED
+}
+
+model MessageMedia {
+  id       String  @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  tenantId String  @db.Uuid @map("tenant_id")
+  messageId String @db.Uuid @map("message_id")
+  message  Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  fileId String? @db.Uuid @map("file_id")
+  file   File?   @relation(fields: [fileId], references: [id], onDelete: SetNull)
+
+  /// Id del medio en Meta. Su URL de descarga caduca en minutos: por eso un
+  /// trabajo aparte lo baja y lo sube a nuestro almacenamiento.
+  externalMediaId String? @db.VarChar(160) @map("external_media_id")
+
+  mimeType String? @db.VarChar(120) @map("mime_type")
+  filename String? @db.VarChar(255)
+  sizeBytes Int? @map("size_bytes")
+  caption  String?
+  /// Duración en segundos, para audio y vídeo.
+  durationSeconds Int? @map("duration_seconds")
+
+  downloadedAt DateTime? @db.Timestamptz(6) @map("downloaded_at")
+  downloadError String? @map("download_error")
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
+
+  @@index([tenantId, messageId])
+  @@map("message_media")
+}
+
+/// Plantillas de WhatsApp. Meta las aprueba; nosotros reflejamos su estado.
+model WaTemplate {
+  id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  tenantId String @db.Uuid @map("tenant_id")
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  channelId String  @db.Uuid @map("channel_id")
+  channel   Channel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+
+  name     String @db.VarChar(120)
+  language String @default("es") @db.VarChar(10)
+  category String @default("UTILITY") @db.VarChar(30) // MARKETING | UTILITY | AUTHENTICATION
+
+  status TemplateStatus @default(DRAFT)
+  externalId String?    @db.VarChar(120) @map("external_id")
+  rejectedReason String? @map("rejected_reason")
+
+  /// Componentes tal como los define la Graph API: header, body, footer, buttons.
+  components Json @db.JsonB
+  /// Nombres de las variables detectadas en el cuerpo, en orden: {{1}}, {{2}}…
+  variables  String[]
+
+  messages Message[]
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
+  updatedAt DateTime @updatedAt @db.Timestamptz(6) @map("updated_at")
+
+  @@unique([channelId, name, language])
+  @@index([tenantId, status])
+  @@map("wa_template")
+}
+
+enum TemplateStatus {
+  DRAFT
+  PENDING
+  APPROVED
+  REJECTED
+  PAUSED
+  DISABLED
+}
+
+/// Webhooks entrantes crudos. Se persisten ANTES de procesarlos y se
+/// responde 200 de inmediato: si tardamos, Meta reintenta y duplicamos.
+/// La unicidad de `eventId` es lo que hace idempotente el reproceso.
+model WebhookEvent {
+  id String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+
+  provider String @db.VarChar(40) // "meta" | "stripe" | ...
+  eventId  String @db.VarChar(200) @map("event_id")
+  eventType String? @db.VarChar(80) @map("event_type")
+
+  /// Puede ser nulo: se resuelve al procesar, no al recibir.
+  tenantId  String? @db.Uuid @map("tenant_id")
+  channelId String? @db.Uuid @map("channel_id")
+
+  payload   Json    @db.JsonB
+  signature String?
+
+  status       WebhookStatus @default(PENDING)
+  attempts     Int           @default(0)
+  lastError    String? @map("last_error")
+  processedAt  DateTime?     @db.Timestamptz(6) @map("processed_at")
+
+  receivedAt DateTime @default(now()) @db.Timestamptz(6) @map("received_at")
+
+  @@unique([provider, eventId])
+  @@index([status, receivedAt])
+  @@index([tenantId, receivedAt(sort: Desc)])
+  @@map("webhook_event")
+}
+
+enum WebhookStatus {
+  PENDING
+  PROCESSING
+  PROCESSED
+  FAILED
+  IGNORED
+}
+
+// ============================================================================
+//  DOMINIO 6 · INTELIGENCIA ARTIFICIAL
+// ============================================================================
+
+model AiSource {
+  id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  tenantId String @db.Uuid @map("tenant_id")
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  type   AiSourceType
+  title  String       @db.VarChar(255)
+  status AiSourceStatus @default(UPLOADED)
+
+  fileId String? @db.Uuid @map("file_id")
+  file   File?   @relation(fields: [fileId], references: [id], onDelete: SetNull)
+  url    String?
+
+  /// Texto extraído completo. Se conserva para poder reindexar con otro
+  /// tamaño de trozo sin volver a parsear el PDF.
+  extractedText String? @db.Text @map("extracted_text")
+
+  chunkCount Int @default(0) @map("chunk_count")
+  tokenCount Int @default(0) @map("token_count")
+
+  errorMessage String? @map("error_message")
+  indexedAt    DateTime? @db.Timestamptz(6) @map("indexed_at")
+
+  uploadedByUserId String? @db.Uuid @map("uploaded_by_user_id")
+
+  chunks AiChunk[]
+
+  createdAt DateTime  @default(now()) @db.Timestamptz(6) @map("created_at")
+  updatedAt DateTime  @updatedAt @db.Timestamptz(6) @map("updated_at")
+  deletedAt DateTime? @db.Timestamptz(6) @map("deleted_at")
+
+  @@index([tenantId, status])
+  @@index([tenantId, deletedAt, createdAt(sort: Desc)])
+  @@map("ai_source")
+}
+
+enum AiSourceType {
+  PDF
+  DOCX
+  TXT
+  MARKDOWN
+  URL
+  MANUAL
+}
+
+enum AiSourceStatus {
+  UPLOADED
+  PROCESSING
+  INDEXED
+  ERROR
+}
+
+/// Un trozo indexado con su vector. El `tenantId` NO es decorativo: la
+/// búsqueda vectorial filtra por él y la política RLS lo respalda. Es el
+/// motivo de tener los embeddings en Postgres y no en una base aparte.
+model AiChunk {
+  id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  tenantId String @db.Uuid @map("tenant_id")
+
+  sourceId String   @db.Uuid @map("source_id")
+  source   AiSource @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+
+  /// Posición dentro del documento, para citar "página 4" y ordenar el contexto.
+  chunkIndex Int @map("chunk_index")
+  content    String @db.Text
+  tokens     Int    @default(0)
+
+  /// Metadatos de cita: página, sección, encabezado.
+  metadata Json? @db.JsonB
+
+  /// text-embedding-3-small → 1536 dimensiones. Índice HNSW en la migración.
+  embedding Unsupported("vector(1536)")?
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
+
+  @@unique([sourceId, chunkIndex])
+  @@index([tenantId, sourceId])
+  @@map("ai_chunk")
+}
+
+model AiThread {
+  id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  tenantId String @db.Uuid @map("tenant_id")
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  title String? @db.VarChar(200)
+
+  /// Un hilo puede nacer del asistente general o estar anclado a una
+  /// conversación de WhatsApp (resumen, respuesta sugerida).
+  conversationId String?       @db.Uuid @map("conversation_id")
+  conversation   Conversation? @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  userId String? @db.Uuid @map("user_id")
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  purpose AiPurpose @default(CHAT)
+
+  messages AiMessage[]
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
+  updatedAt DateTime @updatedAt @db.Timestamptz(6) @map("updated_at")
+
+  @@index([tenantId, userId, updatedAt(sort: Desc)])
+  @@index([tenantId, conversationId])
+  @@map("ai_thread")
+}
+
+enum AiPurpose {
+  CHAT
+  REPLY_SUGGESTION
+  AUTO_REPLY
+  SUMMARY
+  ANALYSIS
+  NEXT_STEP
+  DRAFT
+}
+
+model AiMessage {
+  id       String   @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  tenantId String   @db.Uuid @map("tenant_id")
+  threadId String   @db.Uuid @map("thread_id")
+  thread   AiThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+
+  role    AiRole
+  content String @db.Text
+
+  /// Trozos usados como contexto. Es lo que permite mostrar "según el
+  /// documento X, página 4" y lo que hace auditable la respuesta.
+  citations Json? @db.JsonB
+
+  model       String? @db.VarChar(60)
+  tokensIn    Int     @default(0) @map("tokens_in")
+  tokensOut   Int     @default(0) @map("tokens_out")
+  latencyMs   Int? @map("latency_ms")
+  finishReason String? @db.VarChar(30) @map("finish_reason")
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
+
+  @@index([tenantId, threadId, createdAt])
+  @@map("ai_message")
+}
+
+enum AiRole {
+  SYSTEM
+  USER
+  ASSISTANT
+  TOOL
+}
+
+/// Consumo de IA por empresa. La plataforma paga primero y cobra después:
+/// sin esta tabla no hay forma de poner un techo ni de repercutir el coste.
+model AiUsage {
+  id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  tenantId String @db.Uuid @map("tenant_id")
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  purpose AiPurpose
+  model   String    @db.VarChar(60)
+
+  tokensIn  Int     @default(0) @map("tokens_in")
+  tokensOut Int     @default(0) @map("tokens_out")
+  costUsd   Decimal @default(0) @db.Decimal(10, 6) @map("cost_usd")
+
+  userId String? @db.Uuid @map("user_id")
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
+
+  @@index([tenantId, createdAt(sort: Desc)])
+  @@index([tenantId, purpose, createdAt])
+  @@map("ai_usage")
+}
+
+model AiSetting {
+  id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  tenantId String @unique @db.Uuid @map("tenant_id")
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  enabled Boolean @default(false)
+
+  /// Instrucciones de la empresa: tono, nombre del asistente, qué no decir.
+  /// Se inyectan en el prompt de sistema por encima de las reglas base, que
+  /// no son sobrescribibles por el cliente.
+  systemPrompt String? @db.Text @map("system_prompt")
+  assistantName String @default("Asistente") @db.VarChar(60) @map("assistant_name")
+  tone         String  @default("profesional") @db.VarChar(40)
+
+  /// Responder solo, o sugerir y que el agente decida.
+  autoReply         Boolean @default(false) @map("auto_reply")
+  /// No responder sola si hay un humano asignado a la conversación.
+  autoReplySkipAssigned Boolean @default(true) @map("auto_reply_skip_assigned")
+  /// Horario fuera del cual sí responde sola (JSON con franjas por día).
+  autoReplySchedule Json? @db.JsonB @map("auto_reply_schedule")
+
+  chatModel      String @default("gpt-4o-mini") @db.VarChar(60) @map("chat_model")
+  embeddingModel String @default("text-embedding-3-small") @db.VarChar(60) @map("embedding_model")
+  temperature    Decimal @default(0.3) @db.Decimal(3, 2)
+  maxContextChunks Int   @default(6) @map("max_context_chunks")
+
+  /// Techo mensual en dólares. Al alcanzarlo se corta, no se factura de más.
+  monthlyBudgetUsd Decimal @default(0) @db.Decimal(10, 2) @map("monthly_budget_usd")
+
+  /// Si la recuperación no alcanza este umbral de similitud, la IA no
+  /// responde: deriva a un humano. Es la defensa contra la invención.
+  minSimilarity Decimal @default(0.25) @db.Decimal(4, 3) @map("min_similarity")
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
+  updatedAt DateTime @updatedAt @db.Timestamptz(6) @map("updated_at")
+
+  @@map("ai_setting")
+}
+
+// ============================================================================
+//  DOMINIO 7 · AUTOMATIZACIONES
+// ============================================================================
+
+model Workflow {
+  id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  tenantId String @db.Uuid @map("tenant_id")
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  name        String         @db.VarChar(120)
+  description String?
+  status      WorkflowStatus @default(DRAFT)
+
+  /// Evento del bus que lo despierta: "contact.created", "deal.stage_changed",
+  /// "whatsapp.message.received", "schedule.cron"…
+  triggerType  String @db.VarChar(60) @map("trigger_type")
+  /// Filtro del disparador: qué etapa, qué etiqueta, qué cron.
+  triggerConfig Json  @default("{}") @db.JsonB @map("trigger_config")
+
+  /// Versión publicada actualmente en ejecución.
+  activeVersionId String? @unique @db.Uuid @map("active_version_id")
+
+  /// Impide reinscribir al mismo contacto mientras ya está dentro del flujo.
+  allowReenrollment Boolean @default(false) @map("allow_reenrollment")
+
+  totalRuns   Int @default(0) @map("total_runs")
+  failedRuns  Int @default(0) @map("failed_runs")
+
+  createdByUserId String? @db.Uuid @map("created_by_user_id")
+
+  versions    WorkflowVersion[]
+  runs        WorkflowRun[]
+  enrollments WorkflowEnrollment[]
+
+  createdAt DateTime  @default(now()) @db.Timestamptz(6) @map("created_at")
+  updatedAt DateTime  @updatedAt @db.Timestamptz(6) @map("updated_at")
+  archivedAt DateTime? @db.Timestamptz(6) @map("archived_at")
+
+  @@index([tenantId, status])
+  @@index([tenantId, triggerType, status])
+  @@map("workflow")
+}
+
+enum WorkflowStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  ARCHIVED
+}
+
+/// El grafo se versiona. Una ejecución en curso sigue usando la versión con
+/// la que empezó: editar el flujo no rompe lo que ya está corriendo.
+model WorkflowVersion {
+  id         String   @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  tenantId   String   @db.Uuid @map("tenant_id")
+  workflowId String   @db.Uuid @map("workflow_id")
+  workflow   Workflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+
+  version Int
+
+  /// Nodos y aristas del lienzo. Un solo jsonb porque el grafo se lee y se
+  /// escribe entero: partirlo en dos tablas sólo añadiría joins.
+  /// Validado contra un esquema zod antes de publicarse.
+  graph Json @db.JsonB
+
+  publishedAt     DateTime? @db.Timestamptz(6) @map("published_at")
+  publishedByUserId String? @db.Uuid @map("published_by_user_id")
+
+  runs WorkflowRun[]
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
+
+  @@unique([workflowId, version])
+  @@index([tenantId, workflowId])
+  @@map("workflow_version")
+}
+
+model WorkflowRun {
+  id         String   @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  tenantId   String   @db.Uuid @map("tenant_id")
+  workflowId String   @db.Uuid @map("workflow_id")
+  workflow   Workflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  versionId  String   @db.Uuid @map("version_id")
+  version    WorkflowVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
+
+  status RunStatus @default(PENDING)
+
+  /// Qué disparó esta ejecución.
+  triggerEvent String  @db.VarChar(60) @map("trigger_event")
+  subjectType  String? @db.VarChar(40) @map("subject_type")
+  subjectId    String? @db.Uuid @map("subject_id")
+
+  /// Variables acumuladas: salida de cada nodo disponible para los siguientes.
+  context Json @default("{}") @db.JsonB
+
+  currentNodeId String? @db.VarChar(60) @map("current_node_id")
+  /// Cuándo despertar un nodo de espera. El programador lo consulta; una
+  /// espera de 3 días no ocupa ningún proceso mientras tanto.
+  resumeAt      DateTime? @db.Timestamptz(6) @map("resume_at")
+
+  errorMessage String? @map("error_message")
+  errorNodeId  String? @db.VarChar(60) @map("error_node_id")
+
+  startedAt   DateTime  @default(now()) @db.Timestamptz(6) @map("started_at")
+  completedAt DateTime? @db.Timestamptz(6) @map("completed_at")
+
+  steps WorkflowRunStep[]
+
+  @@index([tenantId, workflowId, startedAt(sort: Desc)])
+  @@index([status, resumeAt])
+  @@index([tenantId, subjectType, subjectId])
+  @@map("workflow_run")
+}
+
+enum RunStatus {
+  PENDING
+  RUNNING
+  WAITING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+/// Un paso ejecutado. Persistir cada paso es lo que hace el motor reanudable
+/// tras un reinicio y lo que permite responder "¿por qué este flujo no hizo
+/// lo que esperaba?" — que es la diferencia entre una función usable y una
+/// que se abandona.
+model WorkflowRunStep {
+  id       String      @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  tenantId String      @db.Uuid @map("tenant_id")
+  runId    String      @db.Uuid @map("run_id")
+  run      WorkflowRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  nodeId   String     @db.VarChar(60) @map("node_id")
+  nodeType String     @db.VarChar(60) @map("node_type")
+  status   StepStatus @default(PENDING)
+
+  input  Json? @db.JsonB
+  output Json? @db.JsonB
+
+  /// Para nodos de condición: qué rama se tomó y por qué.
+  branchTaken String? @db.VarChar(60) @map("branch_taken")
+  skipReason  String? @map("skip_reason")
+
+  errorMessage String? @map("error_message")
+  attempts     Int @default(0)
+
+  startedAt   DateTime  @default(now()) @db.Timestamptz(6) @map("started_at")
+  completedAt DateTime? @db.Timestamptz(6) @map("completed_at")
+  durationMs  Int? @map("duration_ms")
+
+  @@index([tenantId, runId, startedAt])
+  @@map("workflow_run_step")
+}
+
+enum StepStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+  SKIPPED
+}
+
+/// Registro de qué contacto entró en qué flujo y cuándo. Hace cumplir
+/// `allowReenrollment` sin escanear las ejecuciones.
+model WorkflowEnrollment {
+  id         String   @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  tenantId   String   @db.Uuid @map("tenant_id")
+  workflowId String   @db.Uuid @map("workflow_id")
+  workflow   Workflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+
+  contactId String  @db.Uuid @map("contact_id")
+  contact   Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  runId String? @db.Uuid @map("run_id")
+
+  enrolledAt DateTime  @default(now()) @db.Timestamptz(6) @map("enrolled_at")
+  exitedAt   DateTime? @db.Timestamptz(6) @map("exited_at")
+  exitReason String?   @db.VarChar(60) @map("exit_reason")
+
+  @@index([tenantId, workflowId, contactId])
+  @@index([tenantId, contactId])
+  @@map("workflow_enrollment")
+}
+
+// ============================================================================
+//  DOMINIO 8 · DOCUMENTOS COMERCIALES
+//  Cotizaciones, proformas y facturas que las empresas emiten a SUS clientes.
+//  Documento interno + PDF; sin firma fiscal (ver roadmap).
+// ============================================================================
+
+model Document {
+  id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  tenantId String @db.Uuid @map("tenant_id")
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  kind   DocumentKind
+  /// Número visible al cliente: FAC-2026-00041. Generado con bloqueo de fila
+  /// en `number_sequence` para que dos emisiones simultáneas nunca lo repitan.
+  number String       @db.VarChar(40)
+  status DocumentStatus @default(DRAFT)
+
+  contactId String?  @db.Uuid @map("contact_id")
+  contact   Contact? @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  companyId String?  @db.Uuid @map("company_id")
+  company   Company? @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  dealId    String?  @db.Uuid @map("deal_id")
+  deal      Deal?    @relation(fields: [dealId], references: [id], onDelete: SetNull)
+
+  /// Datos del cliente CONGELADOS al emitir. Si el contacto cambia de
+  /// dirección mañana, la factura de ayer no se reescribe sola.
+  billToName    String  @db.VarChar(200) @map("bill_to_name")
+  billToTaxId   String? @db.VarChar(40) @map("bill_to_tax_id")
+  billToEmail   String? @db.VarChar(255) @map("bill_to_email")
+  billToAddress String? @map("bill_to_address")
+  billToCity    String? @db.VarChar(120) @map("bill_to_city")
+  billToCountry String? @db.Char(2) @map("bill_to_country")
+
+  issueDate DateTime  @default(now()) @db.Date @map("issue_date")
+  dueDate   DateTime? @db.Date @map("due_date")
+  validUntil DateTime? @db.Date @map("valid_until") // para cotizaciones
+
+  currency     String  @default("USD") @db.Char(3)
+  /// Tipo de cambio a la moneda de la empresa en el momento de emitir.
+  exchangeRate Decimal @default(1) @db.Decimal(12, 6) @map("exchange_rate")
+
+  subtotal       Decimal @default(0) @db.Decimal(14, 2)
+  discountAmount Decimal @default(0) @db.Decimal(14, 2) @map("discount_amount")
+  taxAmount      Decimal @default(0) @db.Decimal(14, 2) @map("tax_amount")
+  total          Decimal @default(0) @db.Decimal(14, 2)
+  paidAmount     Decimal @default(0) @db.Decimal(14, 2) @map("paid_amount")
+
+  notes String? @db.Text
+  terms String? @db.Text
+
+  templateId String?      @db.Uuid @map("template_id")
+  template   DocTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+
+  pdfFileId String? @db.Uuid @map("pdf_file_id")
+  pdfFile   File?   @relation(fields: [pdfFileId], references: [id], onDelete: SetNull)
+
+  sentAt     DateTime? @db.Timestamptz(6) @map("sent_at")
+  viewedAt   DateTime? @db.Timestamptz(6) @map("viewed_at")
+  acceptedAt DateTime? @db.Timestamptz(6) @map("accepted_at")
+  paidAt     DateTime? @db.Timestamptz(6) @map("paid_at")
+  voidedAt   DateTime? @db.Timestamptz(6) @map("voided_at")
+
+  /// Documento del que nace (cotización → factura).
+  convertedFromId String? @db.Uuid @map("converted_from_id")
+
+  createdByUserId String? @db.Uuid @map("created_by_user_id")
+
+  items    DocumentItem[]
+  payments Payment[]
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
+  updatedAt DateTime @updatedAt @db.Timestamptz(6) @map("updated_at")
+
+  @@unique([tenantId, kind, number])
+  @@index([tenantId, kind, status, issueDate(sort: Desc)])
+  @@index([tenantId, contactId])
+  @@index([tenantId, dealId])
+  @@index([tenantId, status, dueDate])
+  @@map("document")
+}
+
+enum DocumentKind {
+  QUOTE
+  PROFORMA
+  INVOICE
+  CREDIT_NOTE
+}
+
+enum DocumentStatus {
+  DRAFT
+  SENT
+  VIEWED
+  ACCEPTED
+  REJECTED
+  PARTIALLY_PAID
+  PAID
+  OVERDUE
+  VOID
+}
+
+model DocumentItem {
+  id         String   @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  tenantId   String   @db.Uuid @map("tenant_id")
+  documentId String   @db.Uuid @map("document_id")
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  productId String?  @db.Uuid @map("product_id")
+  product   Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  name        String  @db.VarChar(200)
+  description String?
+  quantity    Decimal @db.Decimal(12, 3)
+  unit        String  @default("unidad") @db.VarChar(30)
+  unitPrice   Decimal @db.Decimal(14, 2) @map("unit_price")
+
+  discountPercent Decimal @default(0) @db.Decimal(5, 2) @map("discount_percent")
+
+  taxRateId   String?  @db.Uuid @map("tax_rate_id")
+  taxRate     TaxRate? @relation(fields: [taxRateId], references: [id], onDelete: SetNull)
+  /// Porcentaje congelado al emitir: si el IVA sube, la factura vieja no cambia.
+  taxPercent  Decimal  @default(0) @db.Decimal(5, 2) @map("tax_percent")
+  taxAmount   Decimal  @default(0) @db.Decimal(14, 2) @map("tax_amount")
+
+  subtotal Decimal @db.Decimal(14, 2)
+  total    Decimal @db.Decimal(14, 2)
+
+  sortOrder Int @default(0) @map("sort_order")
+
+  @@index([tenantId, documentId, sortOrder])
+  @@map("document_item")
+}
+
+model Payment {
+  id         String   @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  tenantId   String   @db.Uuid @map("tenant_id")
+  documentId String   @db.Uuid @map("document_id")
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  amount   Decimal       @db.Decimal(14, 2)
+  currency String        @default("USD") @db.Char(3)
+  method   PaymentMethod @default(TRANSFER)
+
+  reference String?  @db.VarChar(120)
+  notes     String?
+  paidAt    DateTime @default(now()) @db.Timestamptz(6) @map("paid_at")
+
+  recordedByUserId String? @db.Uuid @map("recorded_by_user_id")
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
+
+  @@index([tenantId, documentId])
+  @@index([tenantId, paidAt(sort: Desc)])
+  @@map("payment")
+}
+
+enum PaymentMethod {
+  CASH
+  TRANSFER
+  CARD
+  CHECK
+  CRYPTO
+  OTHER
+}
+
+model TaxRate {
+  id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  tenantId String @db.Uuid @map("tenant_id")
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  name      String  @db.VarChar(60) // "IVA 15%"
+  percent   Decimal @db.Decimal(5, 2)
+  isDefault Boolean @default(false) @map("is_default")
+  active    Boolean @default(true)
+
+  products      Product[]
+  documentItems DocumentItem[]
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
+
+  @@unique([tenantId, name])
+  @@index([tenantId, active])
+  @@map("tax_rate")
+}
+
+/// Contador por serie y tipo de documento. El servicio lo lee con
+/// SELECT ... FOR UPDATE dentro de la transacción de emisión: es la única
+/// forma de que dos facturas simultáneas no compartan número.
+model NumberSequence {
+  id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  tenantId String @db.Uuid @map("tenant_id")
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  kind   DocumentKind
+  /// Serie/establecimiento. "001" por defecto.
+  series String       @default("001") @db.VarChar(10)
+  year   Int
+
+  prefix  String @default("") @db.VarChar(20)
+  padding Int    @default(5)
+  current Int    @default(0)
+
+  updatedAt DateTime @updatedAt @db.Timestamptz(6) @map("updated_at")
+
+  @@unique([tenantId, kind, series, year])
+  @@map("number_sequence")
+}
+
+model DocTemplate {
+  id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  tenantId String @db.Uuid @map("tenant_id")
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  name      String       @db.VarChar(80)
+  kind      DocumentKind
+  isDefault Boolean      @default(false) @map("is_default")
+
+  /// Colores, logo, pie de página, columnas visibles. La plantilla React del
+  /// PDF lee esto; no hay HTML libre del usuario (superficie de XSS).
+  design Json @default("{}") @db.JsonB
+
+  headerNote String? @db.Text @map("header_note")
+  footerNote String? @db.Text @map("footer_note")
+
+  documents Document[]
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
+  updatedAt DateTime @updatedAt @db.Timestamptz(6) @map("updated_at")
+
+  @@unique([tenantId, kind, name])
+  @@map("doc_template")
+}
+
+// ============================================================================
+//  DOMINIO 9 · AGENDA Y TAREAS
+// ============================================================================
+
+model Task {
+  id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  tenantId String @db.Uuid @map("tenant_id")
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  title       String  @db.VarChar(200)
+  description String? @db.Text
+
+  status   TaskStatus   @default(PENDING)
+  priority TaskPriority @default(MEDIUM)
+
+  dueAt       DateTime? @db.Timestamptz(6) @map("due_at")
+  completedAt DateTime? @db.Timestamptz(6) @map("completed_at")
+
+  assigneeId String? @db.Uuid @map("assignee_id")
+  assignee   User?   @relation("TaskAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  creatorId  String? @db.Uuid @map("creator_id")
+  creator    User?   @relation("TaskCreator", fields: [creatorId], references: [id], onDelete: SetNull)
+
+  contactId String?  @db.Uuid @map("contact_id")
+  contact   Contact? @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  dealId    String?  @db.Uuid @map("deal_id")
+  deal      Deal?    @relation(fields: [dealId], references: [id], onDelete: Cascade)
+
+  /// Quién la creó: un usuario o una automatización.
+  createdByType ActorType @default(USER) @map("created_by_type")
+  workflowRunId String?   @db.Uuid @map("workflow_run_id")
+
+  reminders Reminder[]
+
+  createdAt DateTime  @default(now()) @db.Timestamptz(6) @map("created_at")
+  updatedAt DateTime  @updatedAt @db.Timestamptz(6) @map("updated_at")
+  deletedAt DateTime? @db.Timestamptz(6) @map("deleted_at")
+
+  @@index([tenantId, assigneeId, status, dueAt])
+  @@index([tenantId, status, dueAt])
+  @@index([tenantId, contactId])
+  @@index([tenantId, dealId])
+  @@map("task")
+}
+
+enum TaskStatus {
+  PENDING
+  IN_PROGRESS
+  DONE
+  CANCELLED
+}
+
+enum TaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+model Event {
+  id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  tenantId String @db.Uuid @map("tenant_id")
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  title       String  @db.VarChar(200)
+  description String? @db.Text
+  location    String? @db.VarChar(255)
+  meetingUrl  String? @map("meeting_url")
+
+  type EventType @default(MEETING)
+
+  /// Siempre en UTC. La zona en la que se creó se guarda aparte para poder
+  /// mostrar "10:00 hora de Quito" aunque el que mira esté en Madrid.
+  startsAt DateTime @db.Timestamptz(6) @map("starts_at")
+  endsAt   DateTime @db.Timestamptz(6) @map("ends_at")
+  timezone String   @default("America/Guayaquil") @db.VarChar(64)
+  allDay   Boolean  @default(false) @map("all_day")
+
+  /// Regla de recurrencia RFC 5545 (RRULE). Las instancias no se materializan:
+  /// se expanden al consultar un rango, y las excepciones viven en
+  /// `recurrenceExceptions` para que editar un día no corrompa la serie.
+  recurrenceRule       String?  @db.VarChar(255) @map("recurrence_rule")
+  recurrenceExceptions DateTime[] @db.Timestamptz(6) @map("recurrence_exceptions")
+  /// Para una instancia modificada de una serie.
+  recurringEventId     String?  @db.Uuid @map("recurring_event_id")
+
+  organizerId String? @db.Uuid @map("organizer_id")
+  organizer   User?   @relation("EventOrganizer", fields: [organizerId], references: [id], onDelete: SetNull)
+
+  contactId String?  @db.Uuid @map("contact_id")
+  contact   Contact? @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  dealId    String?  @db.Uuid @map("deal_id")
+  deal      Deal?    @relation(fields: [dealId], references: [id], onDelete: SetNull)
+
+  status EventStatus @default(CONFIRMED)
+
+  attendees EventAttendee[]
+  reminders Reminder[]
+
+  createdAt DateTime  @default(now()) @db.Timestamptz(6) @map("created_at")
+  updatedAt DateTime  @updatedAt @db.Timestamptz(6) @map("updated_at")
+  deletedAt DateTime? @db.Timestamptz(6) @map("deleted_at")
+
+  @@index([tenantId, startsAt])
+  @@index([tenantId, organizerId, startsAt])
+  @@index([tenantId, contactId])
+  @@map("event")
+}
+
+enum EventType {
+  MEETING
+  CALL
+  FOLLOW_UP
+  DEMO
+  OTHER
+}
+
+enum EventStatus {
+  CONFIRMED
+  TENTATIVE
+  CANCELLED
+}
+
+model EventAttendee {
+  id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  tenantId String @db.Uuid @map("tenant_id")
+  eventId  String @db.Uuid @map("event_id")
+  event    Event  @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  /// Puede ser un usuario del equipo o un invitado externo por correo.
+  userId    String? @db.Uuid @map("user_id")
+  contactId String? @db.Uuid @map("contact_id")
+  email     String? @db.VarChar(255)
+  name      String? @db.VarChar(120)
+
+  response AttendeeResponse @default(NEEDS_ACTION)
+  isOrganizer Boolean       @default(false) @map("is_organizer")
+
+  @@unique([eventId, email])
+  @@index([tenantId, eventId])
+  @@map("event_attendee")
+}
+
+enum AttendeeResponse {
+  NEEDS_ACTION
+  ACCEPTED
+  DECLINED
+  TENTATIVE
+}
+
+model Reminder {
+  id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  tenantId String @db.Uuid @map("tenant_id")
+
+  taskId  String? @db.Uuid @map("task_id")
+  task    Task?   @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  eventId String? @db.Uuid @map("event_id")
+  event   Event?  @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  userId String @db.Uuid @map("user_id")
+
+  /// Momento absoluto en que debe dispararse. El programador consulta por
+  /// este índice; no recalcula offsets en cada barrido.
+  remindAt DateTime @db.Timestamptz(6) @map("remind_at")
+  channel  ReminderChannel @default(IN_APP)
+
+  sentAt DateTime? @db.Timestamptz(6) @map("sent_at")
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
+
+  @@index([remindAt, sentAt])
+  @@index([tenantId, userId])
+  @@map("reminder")
+}
+
+enum ReminderChannel {
+  IN_APP
+  EMAIL
+  WHATSAPP
+  PUSH
+}
+
+/// Disponibilidad semanal de un usuario, para agendar reuniones.
+model Availability {
+  id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  tenantId String @db.Uuid @map("tenant_id")
+  userId   String @db.Uuid @map("user_id")
+  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// 0 = domingo … 6 = sábado
+  weekday   Int
+  /// Minutos desde medianoche en la zona del usuario: 540 = 09:00
+  startMinute Int @map("start_minute")
+  endMinute   Int @map("end_minute")
+
+  @@unique([tenantId, userId, weekday, startMinute])
+  @@index([tenantId, userId])
+  @@map("availability")
+}
+
+// ============================================================================
+//  DOMINIO 10 · ANALÍTICA E INFRAESTRUCTURA
+// ============================================================================
+
+model Dashboard {
+  id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  tenantId String @db.Uuid @map("tenant_id")
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  name String @db.VarChar(120)
+  /// Si es nulo, el panel es de la empresa; si tiene valor, es privado de ese usuario.
+  ownerId String? @db.Uuid @map("owner_id")
+
+  isDefault Boolean @default(false) @map("is_default")
+  /// Plantilla de la que nació: "sales" | "support" | "executive".
+  preset    String? @db.VarChar(40)
+
+  /// Disposición de la cuadrícula: posiciones y tamaños de cada widget.
+  layout Json @default("{}") @db.JsonB
+
+  widgets Widget[]
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
+  updatedAt DateTime @updatedAt @db.Timestamptz(6) @map("updated_at")
+
+  @@index([tenantId, ownerId])
+  @@map("dashboard")
+}
+
+model Widget {
+  id          String    @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  tenantId    String    @db.Uuid @map("tenant_id")
+  dashboardId String    @db.Uuid @map("dashboard_id")
+  dashboard   Dashboard @relation(fields: [dashboardId], references: [id], onDelete: Cascade)
+
+  type  WidgetType
+  title String     @db.VarChar(120)
+
+  /// Qué mide: métrica, dimensión, rango, filtros, comparación.
+  /// Se traduce a SQL por un constructor con lista blanca de campos; el
+  /// usuario nunca escribe SQL ni nombres de columna libres.
+  query Json @db.JsonB
+
+  /// Colores, formato de número, mostrar leyenda.
+  display Json @default("{}") @db.JsonB
+
+  sortOrder Int @default(0) @map("sort_order")
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
+  updatedAt DateTime @updatedAt @db.Timestamptz(6) @map("updated_at")
+
+  @@index([tenantId, dashboardId, sortOrder])
+  @@map("widget")
+}
+
+enum WidgetType {
+  KPI
+  LINE
+  BAR
+  PIE
+  FUNNEL
+  TABLE
+  LIST
+  GAUGE
+}
+
+/// Vista guardada de una tabla: filtros, columnas, orden. Es lo que convierte
+/// una tabla genérica en "mis leads calientes de Quito".
+model SavedView {
+  id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  tenantId String @db.Uuid @map("tenant_id")
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  entity EntityType
+  name   String     @db.VarChar(120)
+
+  ownerId  String? @db.Uuid @map("owner_id")
+  isShared Boolean @default(false) @map("is_shared")
+
+  filters Json @default("{}") @db.JsonB
+  columns Json @default("[]") @db.JsonB
+  sort    Json @default("{}") @db.JsonB
+
+  isDefault Boolean @default(false) @map("is_default")
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
+  updatedAt DateTime @updatedAt @db.Timestamptz(6) @map("updated_at")
+
+  @@unique([tenantId, entity, ownerId, name])
+  @@index([tenantId, entity])
+  @@map("saved_view")
+}
+
+model Notification {
+  id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  tenantId String @db.Uuid @map("tenant_id")
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  userId String @db.Uuid @map("user_id")
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  type  NotificationType
+  title String           @db.VarChar(200)
+  body  String?
+
+  /// A dónde lleva al hacer clic: "/w/acme/chat/abc123".
+  link String?
+
+  resourceType String? @db.VarChar(40) @map("resource_type")
+  resourceId   String? @db.Uuid @map("resource_id")
+
+  readAt DateTime? @db.Timestamptz(6) @map("read_at")
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
+
+  @@index([tenantId, userId, readAt, createdAt(sort: Desc)])
+  @@map("notification")
+}
+
+enum NotificationType {
+  MESSAGE
+  MENTION
+  TASK_ASSIGNED
+  TASK_DUE
+  DEAL_ASSIGNED
+  DEAL_WON
+  DOCUMENT_PAID
+  EVENT_REMINDER
+  IMPORT_FINISHED
+  WORKFLOW_FAILED
+  CHANNEL_ERROR
+  SYSTEM
+}
+
+/// Todo archivo subido. Una sola tabla para adjuntos, PDFs, avatares y
+/// fuentes de IA: un solo sitio donde contar almacenamiento y purgar.
+model File {
+  id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  tenantId String @db.Uuid @map("tenant_id")
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  /// Clave en el bucket. Nombre reescrito: el original nunca llega al disco.
+  storageKey String @unique @db.VarChar(400) @map("storage_key")
+  bucket     String @default("nexo") @db.VarChar(60)
+
+  originalName String @db.VarChar(255) @map("original_name")
+  /// Detectado por número mágico, no por extensión.
+  mimeType     String @db.VarChar(120) @map("mime_type")
+  sizeBytes    Int @map("size_bytes")
+  checksum     String? @db.VarChar(64)
+
+  purpose FilePurpose @default(ATTACHMENT)
+
+  uploadedById String? @db.Uuid @map("uploaded_by_id")
+  uploadedBy   User?   @relation(fields: [uploadedById], references: [id], onDelete: SetNull)
+
+  scanStatus ScanStatus @default(PENDING) @map("scan_status")
+  scanResult String? @map("scan_result")
+
+  media      MessageMedia[]
+  aiSources  AiSource[]
+  documents  Document[]
+
+  createdAt DateTime  @default(now()) @db.Timestamptz(6) @map("created_at")
+  deletedAt DateTime? @db.Timestamptz(6) @map("deleted_at")
+
+  @@index([tenantId, purpose, createdAt(sort: Desc)])
+  @@index([tenantId, deletedAt])
+  @@map("file")
+}
+
+enum FilePurpose {
+  ATTACHMENT
+  AVATAR
+  LOGO
+  DOCUMENT_PDF
+  AI_SOURCE
+  IMPORT
+  EXPORT
+}
+
+enum ScanStatus {
+  PENDING
+  CLEAN
+  INFECTED
+  SKIPPED
+  ERROR
+}
+
+/// Webhooks que la empresa configura para recibir eventos de Nexo en sus
+/// propios sistemas. Firmados con HMAC-SHA256 y reintentados hasta 24 h.
+model OutboundWebhook {
+  id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  tenantId String @db.Uuid @map("tenant_id")
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  name   String   @db.VarChar(80)
+  url    String
+  events String[] // "contact.created", "deal.won", ...
+
+  /// Cifrado. Se muestra una sola vez al crearlo.
+  secretEncrypted String @map("secret_encrypted")
+
+  active Boolean @default(true)
+
+  /// Estadísticas para que el usuario vea si su endpoint está respondiendo.
+  lastDeliveryAt     DateTime? @db.Timestamptz(6) @map("last_delivery_at")
+  lastStatusCode     Int? @map("last_status_code")
+  consecutiveFailures Int      @default(0) @map("consecutive_failures")
+  /// Desactivado automáticamente tras demasiados fallos seguidos.
+  disabledAt         DateTime? @db.Timestamptz(6) @map("disabled_at")
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
+  updatedAt DateTime @updatedAt @db.Timestamptz(6) @map("updated_at")
+
+  @@index([tenantId, active])
+  @@map("outbound_webhook")
+}

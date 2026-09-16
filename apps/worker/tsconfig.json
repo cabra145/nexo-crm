@@ -1,0 +1,13 @@
+{
+  "extends": "@nexo/config/tsconfig/node.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "noEmit": true,
+    "declaration": false,
+    "declarationMap": false,
+    "incremental": false,
+    "experimentalDecorators": false,
+    "emitDecoratorMetadata": false
+  },
+  "include": ["src/**/*.ts"]
+}

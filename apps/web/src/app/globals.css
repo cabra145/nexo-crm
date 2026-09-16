@@ -1,0 +1,54 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+/*
+ * Tokens del sistema de diseño: escalas de color, tipografía, radios, sombras,
+ * animaciones y los colores semánticos de ambos temas. Se genera desde
+ * packages/design/src/tokens.ts; aquí no se define ningún color.
+ */
+@import '@nexo/design/theme.css';
+
+@layer base {
+  *,
+  ::before,
+  ::after {
+    border-color: var(--color-border);
+  }
+
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    @apply bg-canvas text-fg font-sans text-base;
+    /* Cifras de ancho fijo en todo el producto: tablas, importes y KPIs
+       alinean sus columnas sin tener que recordarlo en cada componente. */
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* El foco siempre visible con teclado: la navegación sin ratón no es opcional. */
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-ring;
+  }
+
+  ::selection {
+    @apply bg-primary-subtle text-fg;
+  }
+
+  h1, h2, h3 {
+    text-wrap: balance;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

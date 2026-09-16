@@ -1,0 +1,16 @@
+{
+  "extends": "@nexo/config/tsconfig/base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "noEmit": true
+  },
+  "include": [
+    "src/**/*.ts",
+    "prisma/**/*.ts",
+    "scripts/**/*.mjs"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist"
+  ]
+}

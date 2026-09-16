@@ -1,0 +1,48 @@
+# dependencies
+node_modules/
+.pnpm-store/
+
+# builds
+dist/
+build/
+.next/
+next-env.d.ts
+out/
+*.tsbuildinfo
+
+# env — NUNCA commitear secretos
+.env
+.env.*
+!.env.example
+
+# turbo
+.turbo/
+
+# testing
+coverage/
+*.lcov
+
+# prisma
+packages/database/prisma/*.db
+packages/database/prisma/*.db-journal
+
+# logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# os
+.DS_Store
+Thumbs.db
+
+# editores
+.vscode/*
+!.vscode/extensions.json
+.idea/
+
+# volúmenes locales de docker
+infra/.volumes/
+
+# artefactos generados
+apps/api/openapi.json
+storage/

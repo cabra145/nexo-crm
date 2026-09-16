@@ -1,0 +1,12 @@
+{
+  "extends": "@nexo/config/tsconfig/node.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "noEmit": true,
+    "declaration": false,
+    "declarationMap": false,
+    "incremental": false,
+    "isolatedModules": false
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts"]
+}

@@ -1,0 +1,180 @@
+# =============================================================================
+#  Nexo CRM · Entorno de desarrollo
+# -----------------------------------------------------------------------------
+#  `--env-file .env` es obligatorio: Compose busca el .env junto al archivo
+#  compose (infra/), no en la raíz, y sin él no encuentra las contraseñas.
+#
+#  Levanta sólo la INFRAESTRUCTURA. La web, la API y el worker se ejecutan
+#  fuera, con `pnpm dev`, para conservar la recarga en caliente y poder poner
+#  puntos de interrupción desde el editor.
+#
+#      docker compose --env-file .env -f infra/compose.yml up -d
+#      pnpm db:migrate && pnpm db:seed
+#      pnpm dev
+#
+#  Para producción: infra/compose.prod.yml, que sí construye las tres apps.
+# =============================================================================
+
+name: nexo-dev
+
+services:
+  # ---------------------------------------------------------------------------
+  #  PostgreSQL 16 con pgvector
+  # ---------------------------------------------------------------------------
+  #  La imagen de pgvector en vez de la oficial de Postgres: la extensión
+  #  `vector` tiene que estar compilada dentro, no basta con CREATE EXTENSION.
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: nexo-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-nexo}
+      POSTGRES_USER: ${POSTGRES_USER:-nexo}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?define POSTGRES_PASSWORD en .env}
+      # Contraseña del rol de aplicación, creado por el script de init.
+      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:?define POSTGRES_APP_PASSWORD en .env}
+      # Cotejamiento determinista: sin esto, el orden alfabético depende del
+      # locale del host y los índices se comportan distinto en cada máquina.
+      POSTGRES_INITDB_ARGS: '--locale-provider=icu --icu-locale=es-EC --encoding=UTF8'
+    ports:
+      - '5432:5432'
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      # Los scripts de este directorio corren UNA sola vez, al crear el volumen.
+      - ./docker/postgres-init:/docker-entrypoint-initdb.d:ro
+    command:
+      - postgres
+      # Ajustes de desarrollo. Los de producción van en compose.prod.yml,
+      # calculados para la RAM real de la máquina.
+      - -c
+      - max_connections=100
+      - -c
+      - shared_buffers=256MB
+      - -c
+      - work_mem=8MB
+      # Registra toda consulta que tarde más de 300 ms: así los problemas de
+      # rendimiento aparecen mientras se desarrolla, no en producción.
+      - -c
+      - log_min_duration_statement=300
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-nexo} -d ${POSTGRES_DB:-nexo}']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  # ---------------------------------------------------------------------------
+  #  Redis · colas, caché y pub/sub de WebSocket
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: nexo-redis
+    restart: unless-stopped
+    ports:
+      - '6379:6379'
+    volumes:
+      - redis-data:/data
+    command:
+      - redis-server
+      # AOF activado: las colas no son caché. Perder un reinicio significaría
+      # perder mensajes de WhatsApp pendientes de enviar.
+      - --appendonly
+      - 'yes'
+      - --appendfsync
+      - everysec
+      # Sin límite de memoria con desalojo: BullMQ nunca debe perder trabajos
+      # porque a Redis le pareciera que sobraban.
+      - --maxmemory-policy
+      - noeviction
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ---------------------------------------------------------------------------
+  #  MinIO · almacenamiento de objetos compatible con S3
+  # ---------------------------------------------------------------------------
+  #  MinIO dejó de publicar imágenes de su edición comunitaria en Docker Hub
+  #  (minio/minio devuelve 404). Sólo quedan versiones CONGELADAS en quay.io,
+  #  sin actualizaciones de seguridad públicas. Válido para desarrollo local;
+  #  en producción se usará un servicio compatible con S3 (ver
+  #  docs/arquitectura.md · Correcciones). La aplicación habla la API S3
+  #  estándar, así que el cambio es sólo de configuración.
+  #
+  #  OJO con la etiqueta: las variantes `.hotfix.*` de quay.io son SÓLO amd64 y
+  #  fallan en Apple Silicon con "no matching manifest for linux/arm64/v8".
+  #  La etiqueta base sí publica amd64 y arm64. Comprobado contra el registro:
+  #    curl -H 'Accept: application/vnd.oci.image.index.v1+json' \
+  #      https://quay.io/v2/minio/minio/manifests/<etiqueta>
+  # ---------------------------------------------------------------------------
+  minio:
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
+    container_name: nexo-minio
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY:-nexo_minio}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:?define S3_SECRET_KEY en .env}
+    ports:
+      - '9000:9000'   # API
+      - '9001:9001'   # consola web
+    volumes:
+      - minio-data:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ['CMD', 'mc', 'ready', 'local']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # Crea el bucket al arrancar y se apaga. Sin esto, la primera subida falla.
+  #
+  # No espera a que el healthcheck de MinIO dé "healthy": ese healthcheck usa
+  # `mc` DENTRO de la imagen del servidor, y si alguna versión congelada no lo
+  # trae, este contenedor se quedaría esperando para siempre. En su lugar
+  # reintenta la conexión él mismo durante un minuto.
+  minio-init:
+    image: quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z
+    container_name: nexo-minio-init
+    depends_on:
+      minio:
+        condition: service_started
+    environment:
+      S3_BUCKET: ${S3_BUCKET:-nexo}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-nexo_minio}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:?define S3_SECRET_KEY en .env}
+    entrypoint: >
+      /bin/sh -c "
+      for i in $$(seq 1 30); do
+        mc alias set local http://minio:9000 $$S3_ACCESS_KEY $$S3_SECRET_KEY >/dev/null 2>&1 && break;
+        echo \"Esperando a MinIO ($$i/30)…\"; sleep 2;
+      done &&
+      mc alias set local http://minio:9000 $$S3_ACCESS_KEY $$S3_SECRET_KEY &&
+      mc mb --ignore-existing local/$$S3_BUCKET &&
+      mc anonymous set none local/$$S3_BUCKET &&
+      echo 'Bucket listo — acceso sólo por URL firmada.'
+      "
+
+  # ---------------------------------------------------------------------------
+  #  Mailpit · captura los correos en desarrollo
+  # ---------------------------------------------------------------------------
+  #  Los correos de verificación, recuperación e invitación NO salen a
+  #  internet: se leen en http://localhost:8025.
+  # ---------------------------------------------------------------------------
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: nexo-mailpit
+    restart: unless-stopped
+    ports:
+      - '1025:1025'   # SMTP
+      - '8025:8025'   # interfaz web
+    environment:
+      MP_MAX_MESSAGES: 500
+      MP_SMTP_AUTH_ACCEPT_ANY: 1
+      MP_SMTP_AUTH_ALLOW_INSECURE: 1
+
+volumes:
+  postgres-data:
+  redis-data:
+  minio-data:
