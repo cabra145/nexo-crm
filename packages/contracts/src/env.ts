@@ -16,7 +16,10 @@ const nonEmpty = (name: string) => z.string().min(1, `${name} no puede estar vac
 /** Clave simétrica de 32 bytes en hexadecimal (64 caracteres). */
 const hex32 = z
   .string()
-  .regex(/^[0-9a-fA-F]{64}$/, 'debe ser una clave de 32 bytes en hexadecimal (64 caracteres). Genérala con: openssl rand -hex 32');
+  .regex(
+    /^[0-9a-fA-F]{64}$/,
+    'debe ser una clave de 32 bytes en hexadecimal (64 caracteres). Genérala con: openssl rand -hex 32',
+  );
 
 const port = z.coerce.number().int().min(1).max(65_535);
 
@@ -34,12 +37,12 @@ const mailFrom = z
       const address = v.match(/<([^<>]+)>\s*$/)?.[1] ?? v;
       return z.string().email().safeParse(address.trim()).success;
     },
-    { message: 'debe ser un correo, o "Nombre <correo>", p. ej. "Nexo CRM <no-responder@nexo.app>"' },
+    {
+      message: 'debe ser un correo, o "Nombre <correo>", p. ej. "Nexo CRM <no-responder@nexo.app>"',
+    },
   );
 
-const bool = z
-  .enum(['true', 'false', '1', '0'])
-  .transform((v) => v === 'true' || v === '1');
+const bool = z.enum(['true', 'false', '1', '0']).transform((v) => v === 'true' || v === '1');
 
 /* ========================================================================== */
 /*  Común a todos los procesos                                                */
@@ -162,7 +165,10 @@ export type WorkerEnv = z.infer<typeof workerEnvSchema>;
  * tiene que decir qué variable falta y cómo generarla, no volcar un objeto de
  * zod sin formatear.
  */
-export function parseEnv<T extends z.ZodTypeAny>(schema: T, source: NodeJS.ProcessEnv = process.env): z.infer<T> {
+export function parseEnv<T extends z.ZodTypeAny>(
+  schema: T,
+  source: NodeJS.ProcessEnv = process.env,
+): z.infer<T> {
   const result = schema.safeParse(source);
 
   if (!result.success) {
@@ -185,5 +191,8 @@ export function parseEnv<T extends z.ZodTypeAny>(schema: T, source: NodeJS.Proce
     process.exit(1);
   }
 
+  // Mismo caso que en el pipe de validación: `z.infer<T>` genérico es `any`,
+  // pero el valor acaba de validarse contra el esquema.
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-return
   return result.data;
 }

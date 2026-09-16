@@ -81,9 +81,15 @@ export function runWithTenantContext<T>(context: TenantContext, fn: () => T): T 
   return storage.run(context, () => {
     const result = fn();
 
-    if (result !== null && typeof result === 'object' && typeof (result as { then?: unknown }).then === 'function') {
+    if (
+      result !== null &&
+      typeof result === 'object' &&
+      typeof (result as { then?: unknown }).then === 'function'
+    ) {
       const thenable = result as unknown as PromiseLike<unknown>;
-      return new Promise((resolve, reject) => thenable.then(resolve, reject)) as unknown as T;
+      return new Promise((resolve, reject) => {
+        void thenable.then(resolve, reject);
+      }) as unknown as T;
     }
 
     return result;

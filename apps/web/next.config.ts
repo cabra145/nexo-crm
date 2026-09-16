@@ -46,9 +46,12 @@ const nextConfig: NextConfig = {
   // @nexo/design se consume como código fuente TypeScript (marca y tokens).
   transpilePackages: ['@nexo/design'],
 
-  async headers() {
-    return [{ source: '/:path*', headers: securityHeaders }];
-  },
+  // ESLint corre en su propio paso (`pnpm lint`, y en CI) con la configuración
+  // compartida del monorepo. Repetirlo dentro de `next build` duplicaría el
+  // trabajo con una integración distinta que no ve las mismas reglas.
+  eslint: { ignoreDuringBuilds: true },
+
+  headers: () => Promise.resolve([{ source: '/:path*', headers: securityHeaders }]),
 };
 
 export default nextConfig;

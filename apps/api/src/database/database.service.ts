@@ -6,12 +6,7 @@ import {
   type OnModuleInit,
 } from '@nestjs/common';
 import type { ApiEnv } from '@nexo/contracts';
-import {
-  disconnectDatabase,
-  platformPrisma,
-  prisma,
-  verifyTenantIsolation,
-} from '@nexo/database';
+import { disconnectDatabase, platformPrisma, prisma, verifyTenantIsolation } from '@nexo/database';
 import { API_ENV } from '../config/config.module';
 
 /**

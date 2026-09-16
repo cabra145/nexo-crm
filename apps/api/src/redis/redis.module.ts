@@ -63,10 +63,7 @@ class RedisLifecycle implements OnApplicationShutdown {
 
 @Global()
 @Module({
-  providers: [
-    { provide: REDIS, inject: [API_ENV], useFactory: createRedisClient },
-    RedisLifecycle,
-  ],
+  providers: [{ provide: REDIS, inject: [API_ENV], useFactory: createRedisClient }, RedisLifecycle],
   exports: [REDIS],
 })
 export class RedisModule {}

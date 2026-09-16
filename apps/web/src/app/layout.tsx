@@ -7,8 +7,16 @@ import './globals.css';
 
 // Next descarga las fuentes al compilar y las sirve desde el propio dominio:
 // el navegador del usuario no hace ninguna petición a Google.
-const geistSans = Geist({ subsets: ['latin', 'latin-ext'], variable: '--font-geist-sans', display: 'swap' });
-const geistMono = Geist_Mono({ subsets: ['latin'], variable: '--font-geist-mono', display: 'swap' });
+const geistSans = Geist({
+  subsets: ['latin', 'latin-ext'],
+  variable: '--font-geist-sans',
+  display: 'swap',
+});
+const geistMono = Geist_Mono({
+  subsets: ['latin'],
+  variable: '--font-geist-mono',
+  display: 'swap',
+});
 
 export const metadata: Metadata = {
   title: { default: BRAND.fullName, template: `%s · ${BRAND.fullName}` },
@@ -29,7 +37,11 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     // suppressHydrationWarning: next-themes pone data-theme en <html> antes de
     // hidratar, para que no haya destello del tema equivocado al cargar.
-    <html lang="es" className={`${geistSans.variable} ${geistMono.variable}`} suppressHydrationWarning>
+    <html
+      lang="es"
+      className={`${geistSans.variable} ${geistMono.variable}`}
+      suppressHydrationWarning
+    >
       <body>
         <Providers>{children}</Providers>
       </body>

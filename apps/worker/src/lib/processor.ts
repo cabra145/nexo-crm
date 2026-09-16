@@ -41,7 +41,14 @@ export interface ProcessorDefinition<S extends ZodTypeAny = ZodTypeAny> {
 export interface AnyProcessorDefinition {
   queue: QueueName;
   schema: ZodTypeAny;
+  // `any` y no `unknown`, a propósito: con `unknown` en un parámetro,
+  // `(data: EmailJob) => …` NO sería asignable (los parámetros se comparan al
+  // revés), y volveríamos al error de compilación del paso 15. Es el único
+  // punto del worker donde se borra el tipo, y `runProcessor` valida la carga
+  // con zod antes de pasarla.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   tenantOf?: (data: any) => string | undefined;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   handle: (data: any, ctx: { job: Job; log: Logger }) => Promise<unknown>;
 }
 
@@ -64,7 +71,7 @@ export async function runProcessor(definition: AnyProcessorDefinition, job: Job)
     throw new UnrecoverableError(`Carga del trabajo inválida — ${issues}`);
   }
 
-  const data = parsed.data;
+  const data: unknown = parsed.data;
   const traceId =
     typeof (data as { traceId?: unknown }).traceId === 'string'
       ? (data as { traceId: string }).traceId

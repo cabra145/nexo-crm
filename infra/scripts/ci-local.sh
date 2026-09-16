@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# =============================================================================
+#  Ejecuta en local la misma prueba de integración que el CI.
+# -----------------------------------------------------------------------------
+#      bash infra/scripts/ci-local.sh
+#
+#  Levanta Postgres, Redis y Mailpit en contenedores DESECHABLES con puertos
+#  propios (55432, 56379, 51025/58025), así que no toca tu entorno de
+#  desarrollo ni sus datos. Compila la API y el worker, ejecuta
+#  infra/scripts/ci-integration.sh sobre una base vacía y elimina los
+#  contenedores al terminar, pase lo que pase.
+# =============================================================================
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$ROOT"
+
+PREFIX="nexo-ci-local"
+PG_PORT=55432
+REDIS_PORT=56379
+SMTP_PORT=51025
+MAILPIT_PORT=58025
+
+containers=("$PREFIX-postgres" "$PREFIX-redis" "$PREFIX-mailpit")
+
+teardown() {
+  docker rm -f "${containers[@]}" >/dev/null 2>&1 || true
+}
+trap teardown EXIT
+
+for port in $PG_PORT $REDIS_PORT $SMTP_PORT $MAILPIT_PORT 44000 44100; do
+  if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
+    echo "El puerto $port está ocupado. Libéralo o detén la ejecución anterior." >&2
+    exit 1
+  fi
+done
+
+echo "▸ Servicios desechables"
+teardown
+docker run -d --rm --name "$PREFIX-postgres" -p "$PG_PORT:5432" \
+  -e POSTGRES_DB=nexo -e POSTGRES_USER=nexo -e POSTGRES_PASSWORD=ci_owner_password \
+  -e POSTGRES_INITDB_ARGS='--locale-provider=icu --icu-locale=es-EC --encoding=UTF8' \
+  pgvector/pgvector:pg16 >/dev/null
+docker run -d --rm --name "$PREFIX-redis" -p "$REDIS_PORT:6379" redis:7-alpine >/dev/null
+docker run -d --rm --name "$PREFIX-mailpit" -p "$SMTP_PORT:1025" -p "$MAILPIT_PORT:8025" \
+  axllent/mailpit:v1.31.1 >/dev/null
+
+# El contenedor de Postgres se inicializa con un servidor temporal y luego lo
+# reinicia; se espera al segundo "ready".
+for _ in $(seq 1 60); do
+  ready=$(docker logs "$PREFIX-postgres" 2>&1 | grep -c 'database system is ready to accept connections' || true)
+  [[ "$ready" -ge 2 ]] && break
+  sleep 1
+done
+echo "  ✓ Postgres :$PG_PORT · Redis :$REDIS_PORT · Mailpit :$MAILPIT_PORT"
+
+echo "▸ Build de API y worker"
+pnpm --silent turbo run build --filter=@nexo/api --filter=@nexo/worker --output-logs=errors-only
+
+# `env -i`: la prueba corre SÓLO con estas variables, como en CI. Tu .env de
+# desarrollo no interviene (y aunque se cargara, las variables ya definidas
+# tienen prioridad sobre el archivo).
+env -i PATH="$PATH" HOME="$HOME" \
+  DATABASE_URL="postgresql://nexo_app:ci_app_password@127.0.0.1:$PG_PORT/nexo?schema=public" \
+  DIRECT_DATABASE_URL="postgresql://nexo:ci_owner_password@127.0.0.1:$PG_PORT/nexo?schema=public" \
+  REDIS_URL="redis://127.0.0.1:$REDIS_PORT" \
+  SMTP_HOST=127.0.0.1 SMTP_PORT="$SMTP_PORT" MAILPIT_URL="http://127.0.0.1:$MAILPIT_PORT" \
+  API_PORT=44000 WORKER_HEALTH_PORT=44100 \
+  CI_LOG_DIR="$ROOT/.ci-logs" \
+  bash infra/scripts/ci-integration.sh

@@ -19,6 +19,7 @@
     "dev": "tsc -p tsconfig.build.json --watch --preserveWatchOutput",
     "generate": "prisma generate",
     "prisma": "node --env-file-if-exists=../../.env ./node_modules/prisma/build/index.js",
+    "create-app-role": "node --env-file-if-exists=../../.env scripts/create-app-role.mjs",
     "migrate": "pnpm run prisma migrate dev && pnpm run sql",
     "deploy": "pnpm run prisma migrate deploy && pnpm run sql",
     "sql": "node --env-file-if-exists=../../.env scripts/apply-sql.mjs",
@@ -29,7 +30,8 @@
     "reset": "pnpm run prisma migrate reset --force --skip-seed && pnpm run sql && pnpm run seed",
     "studio": "pnpm run prisma studio",
     "typecheck": "tsc --noEmit",
-    "clean": "rm -rf dist node_modules .turbo"
+    "clean": "rm -rf dist node_modules .turbo",
+    "lint": "eslint . --max-warnings=0"
   },
   "dependencies": {
     "@prisma/client": "5.22.0"
@@ -37,6 +39,7 @@
   "devDependencies": {
     "@nexo/config": "workspace:*",
     "@types/node": "26.5.1",
+    "eslint": "9.39.5",
     "pg": "8.23.0",
     "prisma": "5.22.0",
     "tsx": "4.23.13",

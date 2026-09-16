@@ -1,9 +1,4 @@
-import {
-  type ACTOR_TYPES,
-  type AUDIT_ACTIONS,
-  auditJobSchema,
-  QUEUE_NAMES,
-} from '@nexo/contracts';
+import { type ACTOR_TYPES, type AUDIT_ACTIONS, auditJobSchema, QUEUE_NAMES } from '@nexo/contracts';
 import { type ActorType, type AuditAction, Prisma, prisma } from '@nexo/database';
 import { defineProcessor } from '../lib/processor';
 

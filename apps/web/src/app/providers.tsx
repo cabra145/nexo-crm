@@ -28,14 +28,20 @@ export function Providers({ children }: { children: ReactNode }) {
             // Un error 4xx es una respuesta, no un fallo transitorio:
             // reintentarlo da el mismo resultado. Sólo se reintenta lo demás.
             retry: (failureCount, error) =>
-              !(error instanceof ApiError && error.status >= 400 && error.status < 500) && failureCount < 2,
+              !(error instanceof ApiError && error.status >= 400 && error.status < 500) &&
+              failureCount < 2,
           },
         },
       }),
   );
 
   return (
-    <ThemeProvider attribute="data-theme" defaultTheme="system" enableSystem disableTransitionOnChange>
+    <ThemeProvider
+      attribute="data-theme"
+      defaultTheme="system"
+      enableSystem
+      disableTransitionOnChange
+    >
       <QueryClientProvider client={queryClient}>
         <MotionConfig reducedMotion="user">{children}</MotionConfig>
       </QueryClientProvider>

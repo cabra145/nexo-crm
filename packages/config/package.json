@@ -3,12 +3,30 @@
   "version": "0.1.0",
   "private": true,
   "files": [
-    "tsconfig"
+    "tsconfig",
+    "eslint"
   ],
   "exports": {
     "./tsconfig/base.json": "./tsconfig/base.json",
     "./tsconfig/node.json": "./tsconfig/node.json",
     "./tsconfig/next.json": "./tsconfig/next.json",
-    "./tsconfig/package.json": "./tsconfig/package.json"
+    "./tsconfig/package.json": "./tsconfig/package.json",
+    "./eslint/base": "./eslint/base.mjs",
+    "./eslint/node": "./eslint/node.mjs",
+    "./eslint/next": "./eslint/next.mjs"
+  },
+  "type": "module",
+  "dependencies": {
+    "@eslint/js": "9.39.5",
+    "@next/eslint-plugin-next": "15.5.25",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "globals": "17.12.0",
+    "typescript-eslint": "8.70.0"
+  },
+  "peerDependencies": {
+    "eslint": "9.39.5"
+  },
+  "devDependencies": {
+    "eslint": "9.39.5"
   }
 }

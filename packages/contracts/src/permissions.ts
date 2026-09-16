@@ -121,9 +121,7 @@ export interface RolePreset {
 
 /** Construye un mapa permiso→alcance a partir de una lista, con alcance común. */
 function grant(scope: Scope, permissions: Permission[]): Partial<Record<Permission, Scope>> {
-  return Object.fromEntries(permissions.map((p) => [p, scope])) as Partial<
-    Record<Permission, Scope>
-  >;
+  return Object.fromEntries(permissions.map((p) => [p, scope]));
 }
 
 const AGENT_PERMISSIONS: Permission[] = [
@@ -193,11 +191,7 @@ export const ROLE_PRESETS: RolePreset[] = [
     name: 'Administrador',
     description:
       'Gestiona el producto entero y al equipo. No puede tocar el plan ni la facturación del SaaS.',
-    permissions: grant('ALL', [
-      ...AGENT_PERMISSIONS,
-      ...MANAGER_EXTRA,
-      ...ADMIN_EXTRA,
-    ]),
+    permissions: grant('ALL', [...AGENT_PERMISSIONS, ...MANAGER_EXTRA, ...ADMIN_EXTRA]),
   },
   {
     key: 'MANAGER',
@@ -242,8 +236,7 @@ export const ROLE_PRESETS: RolePreset[] = [
   {
     key: 'AGENT',
     name: 'Agente',
-    description:
-      'Trabaja sus propios contactos y oportunidades, y atiende conversaciones.',
+    description: 'Trabaja sus propios contactos y oportunidades, y atiende conversaciones.',
     permissions: {
       ...grant('OWN', [
         'contact:read',

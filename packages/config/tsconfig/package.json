@@ -4,7 +4,9 @@
   "compilerOptions": {
     "module": "CommonJS",
     "moduleResolution": "Node10",
-    "types": ["node"],
+    "types": [
+      "node"
+    ],
     "noEmit": false,
     "declaration": true,
     "declarationMap": true,

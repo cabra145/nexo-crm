@@ -71,7 +71,13 @@ export const QUEUE_POLICIES: Record<
 /*  Cola `email`                                                              */
 /* ========================================================================== */
 
-export const EMAIL_CATEGORIES = ['auth', 'invitation', 'notification', 'document', 'system'] as const;
+export const EMAIL_CATEGORIES = [
+  'auth',
+  'invitation',
+  'notification',
+  'document',
+  'system',
+] as const;
 
 export const emailJobSchema = z.object({
   to: z.union([emailSchema, z.array(emailSchema).min(1).max(50)]),

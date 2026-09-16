@@ -12,16 +12,16 @@ documentos de IA y su facturación.
 
 ## Estado
 
-| Fase | Contenido | Estado |
-|------|-----------|--------|
-| **0** | Monorepo, esquema de datos, RLS, contratos, infraestructura de desarrollo | **En curso** |
-| 1 | Auth con 2FA, multi-tenant, RBAC, contactos, empresas, embudo Kanban, tareas | Pendiente |
-| 2 | WhatsApp Business Cloud API | Pendiente |
-| 3 | IA con RAG por empresa | Pendiente |
-| 4 | Motor de automatizaciones visual | Pendiente |
-| 5 | Documentos comerciales y suscripciones | Pendiente |
-| 6 | Calendario, dashboards, panel de plataforma | Pendiente |
-| 7 | Endurecimiento y puesta en producción | Pendiente |
+| Fase  | Contenido                                                                              | Estado        |
+| ----- | -------------------------------------------------------------------------------------- | ------------- |
+| **0** | Monorepo, esquema de datos, RLS, contratos, infraestructura de desarrollo, ESLint y CI | **Terminada** |
+| 1     | Auth con 2FA, multi-tenant, RBAC, contactos, empresas, embudo Kanban, tareas           | Pendiente     |
+| 2     | WhatsApp Business Cloud API                                                            | Pendiente     |
+| 3     | IA con RAG por empresa                                                                 | Pendiente     |
+| 4     | Motor de automatizaciones visual                                                       | Pendiente     |
+| 5     | Documentos comerciales y suscripciones                                                 | Pendiente     |
+| 6     | Calendario, dashboards, panel de plataforma                                            | Pendiente     |
+| 7     | Endurecimiento y puesta en producción                                                  | Pendiente     |
 
 La arquitectura completa —incluidas las decisiones descartadas y por qué— está
 en [`docs/arquitectura.md`](docs/arquitectura.md).
@@ -30,11 +30,11 @@ en [`docs/arquitectura.md`](docs/arquitectura.md).
 
 ## Requisitos
 
-| | Versión | Por qué esa |
-|---|---|---|
-| **Node** | ≥ 24 | `AsyncLocalStorage` estable (base del contexto de empresa) y `process.loadEnvFile` nativo. Verificado con Node 26 |
-| **pnpm** | ≥ 12 | Workspaces, `allowBuilds` y la espera mínima tras publicación que protege de versiones comprometidas |
-| **Docker** | ≥ 24 | Postgres con pgvector, Redis, MinIO y el capturador de correo |
+|            | Versión | Por qué esa                                                                                                       |
+| ---------- | ------- | ----------------------------------------------------------------------------------------------------------------- |
+| **Node**   | ≥ 24    | `AsyncLocalStorage` estable (base del contexto de empresa) y `process.loadEnvFile` nativo. Verificado con Node 26 |
+| **pnpm**   | ≥ 12    | Workspaces, `allowBuilds` y la espera mínima tras publicación que protege de versiones comprometidas              |
+| **Docker** | ≥ 24    | Postgres con pgvector, Redis, MinIO y el capturador de correo                                                     |
 
 En macOS:
 
@@ -87,25 +87,25 @@ detecta y aborta.
 pnpm dev
 ```
 
-| | |
-|---|---|
-| Producto | <http://localhost:3000/w/acme> |
-| Panel de plataforma | <http://localhost:3000/admin> |
-| API | <http://localhost:4000/api/v1> |
+|                         |                                  |
+| ----------------------- | -------------------------------- |
+| Producto                | <http://localhost:3000/w/acme>   |
+| Panel de plataforma     | <http://localhost:3000/admin>    |
+| API                     | <http://localhost:4000/api/v1>   |
 | Documentación de la API | <http://localhost:4000/api/docs> |
-| Correos capturados | <http://localhost:8025> |
-| Consola de MinIO | <http://localhost:9001> |
+| Correos capturados      | <http://localhost:8025>          |
+| Consola de MinIO        | <http://localhost:9001>          |
 
 **Cuentas del seed** — contraseña `Desarrollo123!` en todas:
 
-| Correo | Rol | Para probar |
-|---|---|---|
-| `sebastian@acme.test` | Propietario | Acceso total, incluida la suscripción |
-| `ana@acme.test` | Administrador | Todo el producto, sin tocar el plan |
-| `pedro@acme.test` | Responsable | Alcance limitado a su equipo |
-| `lucia@acme.test` | Agente | Sólo sus propios registros |
-| `directora@acme.test` | Invitado | Sólo lectura |
-| `admin@nexo.local` | Plataforma | Panel global |
+| Correo                | Rol           | Para probar                           |
+| --------------------- | ------------- | ------------------------------------- |
+| `sebastian@acme.test` | Propietario   | Acceso total, incluida la suscripción |
+| `ana@acme.test`       | Administrador | Todo el producto, sin tocar el plan   |
+| `pedro@acme.test`     | Responsable   | Alcance limitado a su equipo          |
+| `lucia@acme.test`     | Agente        | Sólo sus propios registros            |
+| `directora@acme.test` | Invitado      | Sólo lectura                          |
+| `admin@nexo.local`    | Plataforma    | Panel global                          |
 
 El seed crea además una **segunda empresa** (`boreal`). No es decorativa: es
 contra la que corren las pruebas de aislamiento. Entra con `owner@boreal.test`
@@ -184,24 +184,44 @@ está nada.
 
 ## Comandos
 
-| Comando | Qué hace |
-|---|---|
-| `pnpm dev` | Web, API y worker con recarga en caliente |
-| `pnpm build` | Compila todo |
-| `pnpm typecheck` | Comprueba tipos en todo el monorepo |
-| `pnpm test` | Pruebas unitarias y de integración |
-| `pnpm test:isolation` | **Pruebas de aislamiento entre empresas** |
-| `pnpm db:migrate` | Migraciones + scripts SQL (RLS, triggers, índices) |
-| `pnpm db:seed` | Datos de desarrollo |
-| `pnpm db:reset` | Borra, migra y siembra de cero |
-| `pnpm db:studio` | Explorador visual de la base de datos |
+| Comando           | Qué hace                                                        |
+| ----------------- | --------------------------------------------------------------- |
+| `pnpm dev`        | Web, API y worker con recarga en caliente                       |
+| `pnpm build`      | Compila todo                                                    |
+| `pnpm typecheck`  | Comprueba tipos en todo el monorepo                             |
+| `pnpm lint`       | ESLint con información de tipos y reglas de seguridad           |
+| `pnpm format`     | Aplica el formato de Prettier                                   |
+| `pnpm check`      | **Formato + lint + tipos: el trabajo "Calidad" del CI**         |
+| `pnpm ci:local`   | **La integración completa del CI, en contenedores desechables** |
+| `pnpm db:migrate` | Migraciones + scripts SQL (RLS, triggers, índices)              |
+| `pnpm db:seed`    | Datos de desarrollo                                             |
+| `pnpm db:reset`   | Borra, migra y siembra de cero                                  |
+| `pnpm db:studio`  | Explorador visual de la base de datos                           |
+
+---
+
+## Integración continua
+
+Cada push a `main` y cada Pull Request ejecutan dos trabajos en paralelo
+([`.github/workflows/ci.yml`](.github/workflows/ci.yml)):
+
+| Trabajo         | Qué comprueba                                                                                                                                                                                                                              |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Calidad**     | Formato, lint, tipos y build de producción de los seis paquetes                                                                                                                                                                            |
+| **Integración** | Sobre una base de datos **vacía**: rol de aplicación, migraciones, RLS, seed, prueba de aislamiento (19 comprobaciones), API real (sondas, errores RFC 7807, cabeceras), worker real, prueba de humo (14 comprobaciones) y cierre ordenado |
+
+La integración es un script, no YAML: `pnpm ci:local` ejecuta exactamente lo
+mismo en tu máquina, con contenedores desechables en puertos propios que no
+tocan tu entorno de desarrollo. Si falla en CI, falla igual en local.
+
+Las acciones de GitHub están fijadas por hash de commit, no por etiqueta.
 
 ---
 
 ## Antes de abrir un Pull Request
 
-- [ ] `pnpm typecheck` y `pnpm test` en verde
-- [ ] `pnpm test:isolation` en verde — **toda ruta nueva pasa por ahí**
+- [ ] `pnpm check` en verde
+- [ ] `pnpm ci:local` en verde — **incluye la prueba de aislamiento entre empresas**
 - [ ] Si añadiste un modelo con `tenantId`: `pnpm db:migrate` y comprobar que
       `verify-rls` lo cubre
 - [ ] Las vistas nuevas resuelven sus cuatro estados: cargando, vacío, error y

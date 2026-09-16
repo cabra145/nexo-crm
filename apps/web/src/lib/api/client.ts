@@ -25,7 +25,10 @@ export class ApiError extends Error {
 
 /** La API no respondió: caída, sin red, CORS o URL mal configurada. */
 export class ApiUnreachableError extends Error {
-  constructor(readonly url: string, cause: unknown) {
+  constructor(
+    readonly url: string,
+    cause: unknown,
+  ) {
     super(`No se pudo conectar con la API en ${url}`, { cause });
     this.name = 'ApiUnreachableError';
   }

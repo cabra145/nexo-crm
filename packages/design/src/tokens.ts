@@ -119,9 +119,9 @@ export const categorical = [
   'oklch(0.625 0.107 174)', // verde azulado
   'oklch(0.612 0.169 245)', // azul
   'oklch(0.640 0.180 305)', // violeta
-  'oklch(0.722 0.152 85)',  // ámbar
+  'oklch(0.722 0.152 85)', // ámbar
   'oklch(0.632 0.144 152)', // verde
-  'oklch(0.598 0.180 25)',  // rojo
+  'oklch(0.598 0.180 25)', // rojo
   'oklch(0.660 0.130 200)', // cian
   'oklch(0.600 0.140 340)', // rosa
 ] as const;
@@ -155,15 +155,15 @@ export const fonts = {
  * el doble en las pantallas que más se usan.
  */
 export const fontSize = {
-  '2xs': ['0.6875rem', { lineHeight: '1rem', letterSpacing: '0.02em' }],  // 11 · etiquetas
-  xs:    ['0.75rem',   { lineHeight: '1.125rem' }],                        // 12 · metadatos
-  sm:    ['0.8125rem', { lineHeight: '1.25rem' }],                         // 13 · tablas
-  base:  ['0.875rem',  { lineHeight: '1.375rem' }],                        // 14 · cuerpo
-  lg:    ['1rem',      { lineHeight: '1.5rem' }],                          // 16
-  xl:    ['1.125rem',  { lineHeight: '1.625rem', letterSpacing: '-0.01em' }],
-  '2xl': ['1.375rem',  { lineHeight: '1.875rem', letterSpacing: '-0.015em' }],
-  '3xl': ['1.75rem',   { lineHeight: '2.125rem', letterSpacing: '-0.02em' }],
-  '4xl': ['2.25rem',   { lineHeight: '2.5rem',   letterSpacing: '-0.025em' }],
+  '2xs': ['0.6875rem', { lineHeight: '1rem', letterSpacing: '0.02em' }], // 11 · etiquetas
+  xs: ['0.75rem', { lineHeight: '1.125rem' }], // 12 · metadatos
+  sm: ['0.8125rem', { lineHeight: '1.25rem' }], // 13 · tablas
+  base: ['0.875rem', { lineHeight: '1.375rem' }], // 14 · cuerpo
+  lg: ['1rem', { lineHeight: '1.5rem' }], // 16
+  xl: ['1.125rem', { lineHeight: '1.625rem', letterSpacing: '-0.01em' }],
+  '2xl': ['1.375rem', { lineHeight: '1.875rem', letterSpacing: '-0.015em' }],
+  '3xl': ['1.75rem', { lineHeight: '2.125rem', letterSpacing: '-0.02em' }],
+  '4xl': ['2.25rem', { lineHeight: '2.5rem', letterSpacing: '-0.025em' }],
 } as const;
 
 /* ========================================================================== */
@@ -309,4 +309,3 @@ export const semanticTokens = {
 
 export type ThemeMode = keyof typeof semanticTokens;
 export type SemanticToken = keyof (typeof semanticTokens)['light'];
-

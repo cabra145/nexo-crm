@@ -21,7 +21,10 @@ async function timed(run: () => Promise<string | void>): Promise<Check> {
     const detail = await Promise.race([
       run(),
       new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error(`sin respuesta en ${CHECK_TIMEOUT_MS} ms`)), CHECK_TIMEOUT_MS),
+        setTimeout(
+          () => reject(new Error(`sin respuesta en ${CHECK_TIMEOUT_MS} ms`)),
+          CHECK_TIMEOUT_MS,
+        ),
       ),
     ]);
     return {
@@ -79,7 +82,9 @@ export class HealthController {
         await this.db.platform.$queryRaw`SELECT 1`;
       }),
       timed(async () => {
-        const pong = await this.redis.ping();
+        // Los tipos de ioredis dicen que ping() sólo puede devolver 'PONG'; la
+        // comprobación existe precisamente para cuando la realidad no coincida.
+        const pong: string = await this.redis.ping();
         if (pong !== 'PONG') throw new Error(`respuesta inesperada: ${pong}`);
       }),
       timed(async () => {

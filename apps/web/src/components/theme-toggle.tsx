@@ -2,8 +2,10 @@
 
 import { Monitor, Moon, Sun } from 'lucide-react';
 import { useTheme } from 'next-themes';
-import { useEffect, useState } from 'react';
+import { useSyncExternalStore } from 'react';
 import { cn } from '@/lib/utils';
+
+const subscribeNoop = () => () => {};
 
 const OPTIONS = [
   { value: 'light', label: 'Claro', icon: Sun },
@@ -22,16 +24,24 @@ export function ThemeToggle({ className }: { className?: string }) {
   const { theme, setTheme } = useTheme();
 
   // El tema elegido se lee del navegador, así que en el servidor no se conoce.
-  // Hasta montar se pinta el control sin selección, para no provocar un
-  // desajuste de hidratación.
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
+  // En el servidor (y en la hidratación) se pinta sin selección; en el cliente,
+  // con la real. `useSyncExternalStore` hace exactamente esa distinción sin el
+  // truco de `useEffect(() => setMounted(true))`, que obliga a renderizar dos
+  // veces.
+  const mounted = useSyncExternalStore(
+    subscribeNoop,
+    () => true,
+    () => false,
+  );
 
   return (
     <div
       role="radiogroup"
       aria-label="Tema de la interfaz"
-      className={cn('inline-flex items-center gap-0.5 rounded-md border border-border bg-surface p-0.5', className)}
+      className={cn(
+        'inline-flex items-center gap-0.5 rounded-md border border-border bg-surface p-0.5',
+        className,
+      )}
     >
       {OPTIONS.map(({ value, label, icon: Icon }) => {
         const selected = mounted && theme === value;

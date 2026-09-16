@@ -88,7 +88,15 @@ const TONE: Record<Tone, { dot: string; pill: string }> = {
 };
 
 /** Estado codificado dos veces, en color y en texto: no depende sólo del color. */
-function StatusPill({ tone, label, pulse = false }: { tone: Tone; label: string; pulse?: boolean }) {
+function StatusPill({
+  tone,
+  label,
+  pulse = false,
+}: {
+  tone: Tone;
+  label: string;
+  pulse?: boolean;
+}) {
   return (
     <AnimatePresence mode="wait" initial={false}>
       <motion.span
@@ -104,7 +112,12 @@ function StatusPill({ tone, label, pulse = false }: { tone: Tone; label: string;
       >
         <span className="relative flex size-1.5">
           {pulse ? (
-            <span className={cn('absolute inset-0 animate-ping rounded-full opacity-60', TONE[tone].dot)} />
+            <span
+              className={cn(
+                'absolute inset-0 animate-ping rounded-full opacity-60',
+                TONE[tone].dot,
+              )}
+            />
           ) : null}
           <span className={cn('relative size-1.5 rounded-full', TONE[tone].dot)} />
         </span>
@@ -133,7 +146,8 @@ function BrandMark() {
 /* ========================================================================== */
 
 export function StatusView() {
-  const { data, error, isPending, isFetching, dataUpdatedAt, errorUpdatedAt, refetch } = useReadiness();
+  const { data, error, isPending, isFetching, dataUpdatedAt, errorUpdatedAt, refetch } =
+    useReadiness();
   const secondsAgo = useSecondsSince(Math.max(dataUpdatedAt, errorUpdatedAt));
   const apiOrigin = new URL(publicEnv.NEXT_PUBLIC_API_URL).origin;
   const isDevelopment = process.env.NODE_ENV === 'development';
@@ -174,14 +188,22 @@ export function StatusView() {
             </div>
           </div>
 
-          <Button variant="secondary" size="sm" onClick={() => void refetch()} disabled={isFetching}>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => void refetch()}
+            disabled={isFetching}
+          >
             <RefreshCw className={cn(isFetching && 'animate-spin')} aria-hidden />
             {isFetching ? 'Comprobando' : 'Comprobar ahora'}
           </Button>
         </div>
 
         {/* --- Detalle ---------------------------------------------------- */}
-        <section aria-label="Dependencias" className="mt-8 overflow-hidden rounded-lg border border-border bg-surface">
+        <section
+          aria-label="Dependencias"
+          className="mt-8 overflow-hidden rounded-lg border border-border bg-surface"
+        >
           {error ? (
             <ConnectionError error={error} apiUrl={publicEnv.NEXT_PUBLIC_API_URL} />
           ) : (
@@ -194,7 +216,9 @@ export function StatusView() {
                       <p className="font-medium">{dep.name}</p>
                       <p className="text-sm text-fg-muted">{dep.description}</p>
                       {check?.status === 'down' && check.detail ? (
-                        <p className="pt-1 font-mono text-xs break-words text-critical">{check.detail}</p>
+                        <p className="pt-1 font-mono text-xs break-words text-critical">
+                          {check.detail}
+                        </p>
                       ) : null}
                     </div>
 
@@ -231,10 +255,22 @@ export function StatusView() {
             </h2>
             <ul className="mt-3 grid gap-px overflow-hidden rounded-lg border border-border bg-border sm:grid-cols-2">
               {[
-                { href: `${apiOrigin}/api/docs`, label: 'Documentación de la API', hint: 'OpenAPI · Swagger' },
+                {
+                  href: `${apiOrigin}/api/docs`,
+                  label: 'Documentación de la API',
+                  hint: 'OpenAPI · Swagger',
+                },
                 { href: 'http://localhost:8025', label: 'Correos capturados', hint: 'Mailpit' },
-                { href: 'http://localhost:9001', label: 'Almacenamiento de archivos', hint: 'Consola de MinIO' },
-                { href: `${apiOrigin}/api/docs/openapi.json`, label: 'Especificación OpenAPI', hint: 'JSON' },
+                {
+                  href: 'http://localhost:9001',
+                  label: 'Almacenamiento de archivos',
+                  hint: 'Consola de MinIO',
+                },
+                {
+                  href: `${apiOrigin}/api/docs/openapi.json`,
+                  label: 'Especificación OpenAPI',
+                  hint: 'JSON',
+                },
               ].map((link) => (
                 <li key={link.href} className="bg-surface">
                   <a
@@ -278,7 +314,8 @@ function ConnectionError({ error, apiUrl }: { error: Error; apiUrl: string }) {
         <p className="font-medium">No se puede conectar con la API</p>
         <p className="text-sm text-fg-muted">
           No hubo respuesta en <span className="font-mono text-fg">{apiUrl}</span>. Comprueba que
-          esté arrancada: desde la raíz del proyecto, <span className="font-mono text-fg">pnpm dev</span>.
+          esté arrancada: desde la raíz del proyecto,{' '}
+          <span className="font-mono text-fg">pnpm dev</span>.
         </p>
       </div>
     );
@@ -288,7 +325,9 @@ function ConnectionError({ error, apiUrl }: { error: Error; apiUrl: string }) {
     return (
       <div className="space-y-2 px-5 py-6">
         <p className="font-medium">{error.problem.title}</p>
-        {error.problem.detail ? <p className="text-sm text-fg-muted">{error.problem.detail}</p> : null}
+        {error.problem.detail ? (
+          <p className="text-sm text-fg-muted">{error.problem.detail}</p>
+        ) : null}
         {error.traceId ? (
           <p className="font-mono text-xs text-fg-faint">Identificador de traza: {error.traceId}</p>
         ) : null}

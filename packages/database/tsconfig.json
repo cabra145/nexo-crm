@@ -4,13 +4,6 @@
     "outDir": "dist",
     "noEmit": true
   },
-  "include": [
-    "src/**/*.ts",
-    "prisma/**/*.ts",
-    "scripts/**/*.mjs"
-  ],
-  "exclude": [
-    "node_modules",
-    "dist"
-  ]
+  "include": ["src/**/*.ts", "prisma/**/*.ts", "scripts/**/*.mjs"],
+  "exclude": ["node_modules", "dist"]
 }

@@ -44,11 +44,7 @@ const INCOMING_TRACE_ID = /^[A-Za-z0-9_-]{8,64}$/;
 
           // Nada de credenciales en los logs, jamás.
           redact: {
-            paths: [
-              'req.headers.authorization',
-              'req.headers.cookie',
-              'res.headers["set-cookie"]',
-            ],
+            paths: ['req.headers.authorization', 'req.headers.cookie', 'res.headers["set-cookie"]'],
             censor: '[redactado]',
           },
 

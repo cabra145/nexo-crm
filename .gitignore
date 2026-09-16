@@ -46,3 +46,6 @@ infra/.volumes/
 # artefactos generados
 apps/api/openapi.json
 storage/
+
+# logs de la prueba de integración (infra/scripts/ci-integration.sh)
+.ci-logs/

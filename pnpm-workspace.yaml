@@ -1,6 +1,6 @@
 packages:
-  - "apps/*"
-  - "packages/*"
+  - 'apps/*'
+  - 'packages/*'
 
 # -----------------------------------------------------------------------------
 #  Scripts de instalación de dependencias
@@ -18,32 +18,32 @@ packages:
 allowBuilds:
   # Descarga los motores nativos de Prisma (consultas y migraciones) para la
   # plataforma actual. Sin ellos no funciona ni `prisma migrate` ni una consulta.
-  "@prisma/engines": true
+  '@prisma/engines': true
 
   # Comprueba que la versión de Node sea compatible con Prisma.
-  "prisma": true
+  'prisma': true
 
   # Genera el cliente a partir del esquema tras instalar, para no trabajar
   # nunca con un cliente desactualizado respecto a schema.prisma.
-  "@prisma/client": true
+  '@prisma/client': true
 
   # Verifica que el binario nativo de esbuild para la plataforma esté presente.
   # Lo usan el compilador de NestJS (vía webpack) y tsx, que ejecuta el seed.
-  "esbuild": true
+  'esbuild': true
 
   # Acelerador nativo opcional de msgpackr (lo usa BullMQ). Su script sólo
   # comprueba el binario precompilado —que llega como paquete aparte y se carga
   # sin él— y, si faltara, intentaría compilar C++ con node-gyp, lo que exige
   # Xcode y rompería la instalación. Sin el acelerador, msgpackr usa su versión
   # en JavaScript puro: BullMQ funciona igual.
-  "msgpackr-extract": false
+  'msgpackr-extract': false
 
   # Optimización de imágenes de Next.js. La 0.35 no tiene script: usa binarios
   # precompilados (@img/sharp-*). Se deniega por si pnpm resolviera la rama
   # 0.34, cuyo script intentaría compilar libvips desde el código fuente.
-  "sharp": false
+  'sharp': false
 
   # Telemetría de instalación. Llega vía @nestjs/swagger → swagger-ui-dist, y
   # su único script (report.js) informa a un tercero de qué empresa instala qué
   # paquete. No aporta nada a la aplicación.
-  "@scarf/scarf": false
+  '@scarf/scarf': false

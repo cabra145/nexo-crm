@@ -113,7 +113,9 @@ async function main() {
 
   const expected = {
     acmeContacts: await count(owner, `SELECT count(*) n FROM contact WHERE tenant_id = $1`, [acme]),
-    borealContacts: await count(owner, `SELECT count(*) n FROM contact WHERE tenant_id = $1`, [boreal]),
+    borealContacts: await count(owner, `SELECT count(*) n FROM contact WHERE tenant_id = $1`, [
+      boreal,
+    ]),
   };
 
   const { rows: scopedTables } = await owner.query(`
@@ -153,25 +155,29 @@ async function main() {
   await withTenant(app, acme, async () => {
     const n = await count(app, `SELECT count(*) n FROM contact`);
     check(`Acme ve sus ${expected.acmeContacts} contactos`, n === expected.acmeContacts, `ve ${n}`);
-    const foreign = await count(app, `SELECT count(*) n FROM contact WHERE tenant_id = $1`, [boreal]);
+    const foreign = await count(app, `SELECT count(*) n FROM contact WHERE tenant_id = $1`, [
+      boreal,
+    ]);
     check('Acme pidiendo explícitamente los de Boreal → 0', foreign === 0, `ve ${foreign}`);
     const tenantsSeen = await count(app, `SELECT count(*) n FROM tenant`);
     check('Acme sólo ve su propia fila en tenant', tenantsSeen === 1, `ve ${tenantsSeen}`);
   });
   await withTenant(app, boreal, async () => {
     const n = await count(app, `SELECT count(*) n FROM contact`);
-    check(`Boreal ve sus ${expected.borealContacts} contactos`, n === expected.borealContacts, `ve ${n}`);
+    check(
+      `Boreal ve sus ${expected.borealContacts} contactos`,
+      n === expected.borealContacts,
+      `ve ${n}`,
+    );
   });
 
   console.log(`\n4 · Barrido de las ${scopedTables.length} tablas protegidas desde Acme`);
   await withTenant(app, acme, async () => {
     const leaks = [];
     for (const { name } of scopedTables) {
-      const n = await count(
-        app,
-        `SELECT count(*) n FROM public."${name}" WHERE tenant_id <> $1`,
-        [acme],
-      );
+      const n = await count(app, `SELECT count(*) n FROM public."${name}" WHERE tenant_id <> $1`, [
+        acme,
+      ]);
       if (n > 0) leaks.push(`${name} (${n})`);
     }
     check(
@@ -214,10 +220,20 @@ async function main() {
       `UPDATE contact SET first_name = 'Modificado' WHERE tenant_id = $1`,
       [boreal],
     );
-    check('modificar contactos de Boreal → 0 filas afectadas', updated === 0, `${updated} afectadas`);
+    check(
+      'modificar contactos de Boreal → 0 filas afectadas',
+      updated === 0,
+      `${updated} afectadas`,
+    );
 
-    const { rowCount: deleted } = await app.query(`DELETE FROM deal WHERE tenant_id = $1`, [boreal]);
-    check('borrar oportunidades de Boreal → 0 filas afectadas', deleted === 0, `${deleted} afectadas`);
+    const { rowCount: deleted } = await app.query(`DELETE FROM deal WHERE tenant_id = $1`, [
+      boreal,
+    ]);
+    check(
+      'borrar oportunidades de Boreal → 0 filas afectadas',
+      deleted === 0,
+      `${deleted} afectadas`,
+    );
 
     const { rowCount: tenantUpdated } = await app.query(
       `UPDATE tenant SET name = 'Secuestrada' WHERE id = $1`,
@@ -238,10 +254,7 @@ async function main() {
   console.log('\n7 · Un contexto inválido no abre la puerta');
   await app.query('BEGIN');
   await app.query(`SELECT set_config('app.tenant_id', '', true)`);
-  check(
-    'contexto vacío → 0 filas',
-    (await count(app, `SELECT count(*) n FROM contact`)) === 0,
-  );
+  check('contexto vacío → 0 filas', (await count(app, `SELECT count(*) n FROM contact`)) === 0);
   await app.query('ROLLBACK');
 
   await app.end();

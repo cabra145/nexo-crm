@@ -3,25 +3,25 @@
 Versión navegable, con diagramas:
 **<https://claude.ai/code/artifact/5700f054-f5b9-4489-87d2-e6be8b4e436a>**
 
-Este documento es el registro *en el repositorio*: las decisiones que gobiernan
+Este documento es el registro _en el repositorio_: las decisiones que gobiernan
 el código, y las correcciones que aparecieron al implementarlas.
 
 ---
 
 ## Decisiones que definen el sistema
 
-| Decisión | Elegido | Descartado y por qué |
-|---|---|---|
-| Aislamiento | BD compartida + `tenant_id` + RLS forzada | Un esquema por empresa: migrar miles de esquemas es inviable. BD por empresa: coste desproporcionado hasta facturar mucho |
-| Repositorio | Monorepo pnpm + Turborepo | Repos separados: los tipos entre API y web se desincronizan |
-| Sesión | Cookie `httpOnly` + refresh rotativo | JWT en `localStorage`: cualquier XSS se lleva la sesión entera |
-| Búsqueda | `pg_trgm` + `tsvector` nativos | Elasticsearch: un servicio más que operar y sincronizar sin necesidad aún |
-| Embeddings | `pgvector` en la misma base | Pinecone/Qdrant: una segunda superficie donde podrían filtrarse datos entre empresas |
-| Colas | BullMQ sobre Redis | Cron dentro de la API: no sobrevive a reinicios ni escala sin duplicar ejecuciones |
-| Tiempo real | Socket.IO + adaptador Redis | Polling: latencia y coste. SSE: unidireccional, no sirve para acuses ni "escribiendo…" |
-| Automatizaciones | Intérprete de grafos propio | n8n/Temporal embebidos: imponen su modelo de datos y su interfaz |
-| PDF | React → HTML → Puppeteer | Librerías por coordenadas: cada cambio de plantilla es aritmética a mano |
-| Estado cliente | React Query (servidor) + Zustand (UI) | Redux global con datos del servidor: invalidación manual y el triple de código |
+| Decisión         | Elegido                                   | Descartado y por qué                                                                                                      |
+| ---------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| Aislamiento      | BD compartida + `tenant_id` + RLS forzada | Un esquema por empresa: migrar miles de esquemas es inviable. BD por empresa: coste desproporcionado hasta facturar mucho |
+| Repositorio      | Monorepo pnpm + Turborepo                 | Repos separados: los tipos entre API y web se desincronizan                                                               |
+| Sesión           | Cookie `httpOnly` + refresh rotativo      | JWT en `localStorage`: cualquier XSS se lleva la sesión entera                                                            |
+| Búsqueda         | `pg_trgm` + `tsvector` nativos            | Elasticsearch: un servicio más que operar y sincronizar sin necesidad aún                                                 |
+| Embeddings       | `pgvector` en la misma base               | Pinecone/Qdrant: una segunda superficie donde podrían filtrarse datos entre empresas                                      |
+| Colas            | BullMQ sobre Redis                        | Cron dentro de la API: no sobrevive a reinicios ni escala sin duplicar ejecuciones                                        |
+| Tiempo real      | Socket.IO + adaptador Redis               | Polling: latencia y coste. SSE: unidireccional, no sirve para acuses ni "escribiendo…"                                    |
+| Automatizaciones | Intérprete de grafos propio               | n8n/Temporal embebidos: imponen su modelo de datos y su interfaz                                                          |
+| PDF              | React → HTML → Puppeteer                  | Librerías por coordenadas: cada cambio de plantilla es aritmética a mano                                                  |
+| Estado cliente   | React Query (servidor) + Zustand (UI)     | Redux global con datos del servidor: invalidación manual y el triple de código                                            |
 
 ---
 
@@ -31,8 +31,8 @@ el código, y las correcciones que aparecieron al implementarlas.
 2. **Extensión de Prisma** — inyecta `tenantId` en `where` y `data` (`packages/database/src/client.ts`)
 3. **Row Level Security** — políticas en Postgres (`packages/database/prisma/sql/01_rls.sql`)
 
-Las dos primeras son de aplicación y dan *corrección*. La tercera da
-*seguridad*: no se puede saltar desde el código porque la aplicación conecta
+Las dos primeras son de aplicación y dan _corrección_. La tercera da
+_seguridad_: no se puede saltar desde el código porque la aplicación conecta
 con un rol sin `BYPASSRLS` que no es dueño de las tablas.
 
 Ninguna de las tres lleva una lista escrita a mano. La capa 2 deriva los
@@ -51,19 +51,19 @@ resultaron ser distintas. Se anotan aquí y no se corrigen en silencio.
 
 El plan sumó mal los dominios. El desglose real:
 
-| Dominio | Tablas |
-|---|---:|
-| Plataforma | 7 |
-| Identidad y acceso | 9 |
-| CRM | 8 |
-| Ventas | 7 |
-| Conversaciones | 7 |
-| Inteligencia artificial | 6 |
-| Automatizaciones | 5 |
-| Documentos comerciales | 6 |
-| Agenda y tareas | 5 |
-| Analítica e infraestructura | 6 |
-| **Total** | **66** |
+| Dominio                     | Tablas |
+| --------------------------- | -----: |
+| Plataforma                  |      7 |
+| Identidad y acceso          |      9 |
+| CRM                         |      8 |
+| Ventas                      |      7 |
+| Conversaciones              |      7 |
+| Inteligencia artificial     |      6 |
+| Automatizaciones            |      5 |
+| Documentos comerciales      |      6 |
+| Agenda y tareas             |      5 |
+| Analítica e infraestructura |      6 |
+| **Total**                   | **66** |
 
 De ellas, **55 llevan `tenant_id` obligatorio** y política RLS (el plan decía
 41). `tenant` tiene política propia contra su clave primaria, y 10 quedan fuera
@@ -146,19 +146,19 @@ actualizaciones de seguridad públicas.
 
 ## Alcance decidido
 
-| Punto | Decisión |
-|---|---|
-| Facturación | Documentos internos + PDF. La integración fiscal por país queda en el roadmap |
+| Punto             | Decisión                                                                                 |
+| ----------------- | ---------------------------------------------------------------------------------------- |
+| Facturación       | Documentos internos + PDF. La integración fiscal por país queda en el roadmap            |
 | Pasarela de pagos | Sin acoplar hasta la Fase 5. `plan` y `subscription` ya existen y sus límites se aplican |
-| Escala objetivo | Arranque pequeño: un VPS, sin réplicas ni servicio gestionado |
-| Orden de fases | 0 y 1 completas primero; después WhatsApp (Fase 2) |
+| Escala objetivo   | Arranque pequeño: un VPS, sin réplicas ni servicio gestionado                            |
+| Orden de fases    | 0 y 1 completas primero; después WhatsApp (Fase 2)                                       |
 
 ---
 
 ## Pendiente de ti
 
-| | Bloquea |
-|---|---|
-| Nombre y dominio reales del producto | Nada, pero cambiarlo tarde es caro. Centralizado en `packages/design/src/brand.ts` |
-| Cuenta de Meta Business verificada | Fase 2. **La verificación tarda días o semanas: conviene iniciarla ya** |
-| Clave de OpenAI y techo mensual de gasto | Fase 3 |
+|                                          | Bloquea                                                                            |
+| ---------------------------------------- | ---------------------------------------------------------------------------------- |
+| Nombre y dominio reales del producto     | Nada, pero cambiarlo tarde es caro. Centralizado en `packages/design/src/brand.ts` |
+| Cuenta de Meta Business verificada       | Fase 2. **La verificación tarda días o semanas: conviene iniciarla ya**            |
+| Clave de OpenAI y techo mensual de gasto | Fase 3                                                                             |

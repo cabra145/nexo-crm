@@ -1,0 +1,13 @@
+# Generados
+**/dist
+**/.next
+**/.turbo
+**/coverage
+**/next-env.d.ts
+pnpm-lock.yaml
+
+# Migraciones: el SQL que generó Prisma se conserva tal cual se aplicó.
+packages/database/prisma/migrations
+
+# Plantillas con marcadores que Prettier reescribiría
+.env*

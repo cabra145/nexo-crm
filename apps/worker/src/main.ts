@@ -3,7 +3,7 @@ import { env } from './bootstrap/env';
 
 import { QUEUE_POLICIES } from '@nexo/contracts';
 import { disconnectDatabase, platformPrisma } from '@nexo/database';
-import { Worker } from 'bullmq';
+import { UnrecoverableError, Worker } from 'bullmq';
 import { startHealthServer } from './lib/health-server';
 import { logger } from './lib/logger';
 import { runProcessor } from './lib/processor';
@@ -23,8 +23,11 @@ async function main(): Promise<void> {
     logger.info('Conectado a PostgreSQL');
   } catch (error) {
     const message = error instanceof Error ? error.message.split('\n')[0] : String(error);
-    if (env.NODE_ENV === 'production') throw new Error(`No se pudo conectar a PostgreSQL: ${message}`);
-    logger.warn(`No se pudo conectar a PostgreSQL (${message}). Los trabajos que la usen fallarán y se reintentarán.`);
+    if (env.NODE_ENV === 'production')
+      throw new Error(`No se pudo conectar a PostgreSQL: ${message}`);
+    logger.warn(
+      `No se pudo conectar a PostgreSQL (${message}). Los trabajos que la usen fallarán y se reintentarán.`,
+    );
   }
 
   // --- Colas -----------------------------------------------------------------
@@ -43,7 +46,10 @@ async function main(): Promise<void> {
 
     worker.on('failed', (job, error) => {
       const attempts = job?.opts.attempts ?? 1;
-      const exhausted = !job || job.attemptsMade >= attempts;
+      // Definitivo si se agotaron los intentos O si el error es irrecuperable
+      // (carga inválida): BullMQ no reintenta esos, aunque queden intentos.
+      const unrecoverable = error instanceof UnrecoverableError;
+      const exhausted = !job || unrecoverable || job.attemptsMade >= attempts;
       logger[exhausted ? 'error' : 'warn'](
         {
           queue: definition.queue,
@@ -106,11 +112,17 @@ async function main(): Promise<void> {
 }
 
 process.on('unhandledRejection', (reason) => {
-  logger.fatal({ err: reason instanceof Error ? reason.stack : String(reason) }, 'Promesa rechazada sin capturar');
+  logger.fatal(
+    { err: reason instanceof Error ? reason.stack : String(reason) },
+    'Promesa rechazada sin capturar',
+  );
   process.exit(1);
 });
 
 main().catch((error: unknown) => {
-  logger.fatal({ err: error instanceof Error ? error.stack : String(error) }, 'El worker no pudo arrancar');
+  logger.fatal(
+    { err: error instanceof Error ? error.stack : String(error) },
+    'El worker no pudo arrancar',
+  );
   process.exit(1);
 });

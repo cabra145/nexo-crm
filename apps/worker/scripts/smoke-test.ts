@@ -78,8 +78,14 @@ async function main(): Promise<void> {
   const connection = new Redis(env.REDIS_URL, { maxRetriesPerRequest: null });
   const emailQueue = new Queue(QUEUE_NAMES.EMAIL, { connection });
   const auditQueue = new Queue(QUEUE_NAMES.AUDIT, { connection });
-  const emailEvents = new QueueEvents(QUEUE_NAMES.EMAIL, { connection: connection.duplicate() });
-  const auditEvents = new QueueEvents(QUEUE_NAMES.AUDIT, { connection: connection.duplicate() });
+  // QueueEvents necesita una conexión propia (se queda bloqueada esperando
+  // eventos). Se guardan en variables porque BullMQ NO cierra conexiones que
+  // le pasan hechas: si no se cierran aquí, mantienen vivo el proceso para
+  // siempre aunque la prueba haya terminado.
+  const emailEventsConnection = connection.duplicate();
+  const auditEventsConnection = connection.duplicate();
+  const emailEvents = new QueueEvents(QUEUE_NAMES.EMAIL, { connection: emailEventsConnection });
+  const auditEvents = new QueueEvents(QUEUE_NAMES.AUDIT, { connection: auditEventsConnection });
 
   // El rol dueño sólo se usa para preparar (averiguar ids) y limpiar.
   const owner = new PrismaClient({
@@ -109,7 +115,9 @@ async function main(): Promise<void> {
     const boreal = await owner.tenant.findUnique({ where: { slug: 'boreal' } });
     const actor = await owner.user.findUnique({ where: { email: 'sebastian@acme.test' } });
     if (!acme || !boreal || !actor) {
-      console.error('\nFaltan las empresas o usuarios del seed. Ejecuta: pnpm --filter @nexo/database seed\n');
+      console.error(
+        '\nFaltan las empresas o usuarios del seed. Ejecuta: pnpm --filter @nexo/database seed\n',
+      );
       process.exitCode = 1;
       return;
     }
@@ -142,7 +150,11 @@ async function main(): Promise<void> {
     }
 
     const mail = await waitForMail(subject);
-    check('el correo llegó a Mailpit', mail !== null, mail ? `abre ${MAILPIT_URL}` : 'no apareció en 10 s');
+    check(
+      'el correo llegó a Mailpit',
+      mail !== null,
+      mail ? `abre ${MAILPIT_URL}` : 'no apareció en 10 s',
+    );
     check(
       'con el destinatario correcto',
       mail?.To?.some((t) => t.Address === 'lucia@acme.test') ?? false,
@@ -251,7 +263,11 @@ async function main(): Promise<void> {
       emailQueue.close(),
       auditQueue.close(),
     ]);
-    await connection.quit().catch(() => connection.disconnect());
+    await Promise.allSettled(
+      [connection, emailEventsConnection, auditEventsConnection].map((c) =>
+        c.quit().catch(() => c.disconnect()),
+      ),
+    );
   }
 
   const failed = results.filter((r) => !r.passed);
@@ -268,7 +284,14 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((error: unknown) => {
-  console.error('\nLa prueba no pudo completarse:\n', error);
-  process.exit(1);
-});
+main()
+  .catch((error: unknown) => {
+    console.error('\nLa prueba no pudo completarse:\n', error);
+    process.exitCode = 1;
+  })
+  .finally(() => {
+    // Las conexiones se cierran dentro de main(). Esta salida explícita es la
+    // red por si alguna librería deja un temporizador vivo: una prueba que
+    // termina pero no sale bloquearía el CI hasta su tiempo límite.
+    process.exit(process.exitCode ?? 0);
+  });

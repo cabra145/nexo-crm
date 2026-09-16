@@ -32,9 +32,7 @@ import { getTenantContext, requireTenantId } from './tenant-context';
 const TENANT_SCOPED_MODELS: ReadonlySet<string> = new Set(
   Prisma.dmmf.datamodel.models
     .filter((model) =>
-      model.fields.some(
-        (field) => field.name === 'tenantId' && field.isRequired && !field.isList,
-      ),
+      model.fields.some((field) => field.name === 'tenantId' && field.isRequired && !field.isList),
     )
     .map((model) => model.name),
 );
@@ -83,9 +81,7 @@ const insideTenantTransaction = new AsyncLocalStorage<true>();
 
 function assertSchemaIsCovered(): void {
   const withNullableTenant = Prisma.dmmf.datamodel.models.filter((model) =>
-    model.fields.some(
-      (field) => field.name === 'tenantId' && !field.isRequired && !field.isList,
-    ),
+    model.fields.some((field) => field.name === 'tenantId' && !field.isRequired && !field.isList),
   );
 
   const unexpected = withNullableTenant
@@ -161,28 +157,40 @@ export const prisma = platformPrisma.$extends({
         }
 
         const tenantId = context.tenantId;
-        let nextArgs: any = args ?? {};
+
+        // Los argumentos de esta función son la unión de los de TODOS los
+        // modelos y operaciones, así que no hay un tipo concreto que los
+        // describa. Se tratan como objetos genéricos: lo único que se hace es
+        // añadir `tenantId` en el sitio correcto, sin leer nada más.
+        type Args = Record<string, unknown>;
+        const input = (args ?? {}) as Args;
+        const asArgs = (value: unknown): Args =>
+          value !== null && typeof value === 'object' ? (value as Args) : {};
+
+        let nextArgs: Args = input;
 
         if (WHERE_OPS.has(operation)) {
-          nextArgs = { ...nextArgs, where: { ...nextArgs.where, tenantId } };
+          nextArgs = { ...input, where: { ...asArgs(input.where), tenantId } };
         } else if (operation === 'create') {
-          nextArgs = { ...nextArgs, data: { ...nextArgs.data, tenantId } };
+          nextArgs = { ...input, data: { ...asArgs(input.data), tenantId } };
         } else if (operation === 'createMany' || operation === 'createManyAndReturn') {
-          const rows = Array.isArray(nextArgs.data) ? nextArgs.data : [nextArgs.data];
-          nextArgs = { ...nextArgs, data: rows.map((row: any) => ({ ...row, tenantId })) };
+          const rows: unknown[] = Array.isArray(input.data) ? input.data : [input.data];
+          nextArgs = { ...input, data: rows.map((row) => ({ ...asArgs(row), tenantId })) };
         } else if (operation === 'upsert') {
           nextArgs = {
-            ...nextArgs,
-            where: { ...nextArgs.where, tenantId },
-            create: { ...nextArgs.create, tenantId },
-            update: { ...nextArgs.update },
+            ...input,
+            where: { ...asArgs(input.where), tenantId },
+            create: { ...asArgs(input.create), tenantId },
+            update: asArgs(input.update),
           };
         }
+
+        const finalArgs = nextArgs as typeof args;
 
         // Ya estamos dentro de una transacción que fijó `app.tenant_id` una
         // sola vez. Abrir otra aquí la anidaría sin necesidad.
         if (insideTenantTransaction.getStore()) {
-          return query(nextArgs);
+          return query(finalArgs);
         }
 
         // --- Una transacción por consulta ----------------------------------
@@ -190,9 +198,11 @@ export const prisma = platformPrisma.$extends({
         // terminar, así que una conexión reutilizada del pool nunca hereda la
         // empresa de la petición anterior. Es exactamente la garantía que
         // necesitamos con un pool compartido entre clientes.
+        // `query()` devuelve una PrismaPromise, que es lo que acepta la forma en
+        // lote de `$transaction`; sus tipos sólo la declaran como Promise.
         const [, result] = await platformPrisma.$transaction([
           platformPrisma.$executeRaw`SELECT set_config('app.tenant_id', ${tenantId}::text, true)`,
-          query(nextArgs) as any,
+          query(finalArgs) as Prisma.PrismaPromise<unknown>,
         ]);
 
         return result;

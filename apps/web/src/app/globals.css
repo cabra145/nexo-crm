@@ -22,7 +22,7 @@
   }
 
   body {
-    @apply bg-canvas text-fg font-sans text-base;
+    @apply bg-canvas font-sans text-base text-fg;
     /* Cifras de ancho fijo en todo el producto: tablas, importes y KPIs
        alinean sus columnas sin tener que recordarlo en cada componente. */
     font-variant-numeric: tabular-nums;
@@ -37,7 +37,9 @@
     @apply bg-primary-subtle text-fg;
   }
 
-  h1, h2, h3 {
+  h1,
+  h2,
+  h3 {
     text-wrap: balance;
   }
 }

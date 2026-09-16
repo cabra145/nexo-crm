@@ -14,11 +14,13 @@
     "build": "node --import tsx scripts/build-theme.ts",
     "dev": "node --watch-path=src --watch-preserve-output --import tsx scripts/build-theme.ts",
     "typecheck": "tsc --noEmit",
-    "clean": "rm -rf dist node_modules .turbo"
+    "clean": "rm -rf dist node_modules .turbo",
+    "lint": "eslint . --max-warnings=0"
   },
   "devDependencies": {
     "@nexo/config": "workspace:*",
     "@types/node": "26.5.1",
+    "eslint": "9.39.5",
     "tsx": "4.23.13",
     "typescript": "5.9.3"
   }

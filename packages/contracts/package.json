@@ -22,7 +22,8 @@
     "build": "tsc -p tsconfig.build.json",
     "dev": "tsc -p tsconfig.build.json --watch --preserveWatchOutput",
     "typecheck": "tsc --noEmit",
-    "clean": "rm -rf dist node_modules .turbo"
+    "clean": "rm -rf dist node_modules .turbo",
+    "lint": "eslint . --max-warnings=0"
   },
   "dependencies": {
     "zod": "3.25.76"
@@ -30,6 +31,7 @@
   "devDependencies": {
     "@nexo/config": "workspace:*",
     "@types/node": "26.5.1",
+    "eslint": "9.39.5",
     "typescript": "5.9.3"
   },
   "files": [

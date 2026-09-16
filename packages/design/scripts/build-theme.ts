@@ -92,9 +92,15 @@ line(`  --animate-slide-up: slide-up ${motion.duration.normal}ms ${motion.easing
 line(`  --animate-slide-in-right: slide-in-right ${motion.duration.slow}ms ${motion.easing};`);
 line('  --animate-typing-dot: typing-dot 1.4s ease-in-out infinite;');
 line('  @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }');
-line('  @keyframes slide-up { from { transform: translateY(0.5rem); opacity: 0; } to { transform: translateY(0); opacity: 1; } }');
-line('  @keyframes slide-in-right { from { transform: translateX(100%); } to { transform: translateX(0); } }');
-line('  @keyframes typing-dot { 0%, 60%, 100% { opacity: 0.3; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-0.125rem); } }');
+line(
+  '  @keyframes slide-up { from { transform: translateY(0.5rem); opacity: 0; } to { transform: translateY(0); opacity: 1; } }',
+);
+line(
+  '  @keyframes slide-in-right { from { transform: translateX(100%); } to { transform: translateX(0); } }',
+);
+line(
+  '  @keyframes typing-dot { 0%, 60%, 100% { opacity: 0.3; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-0.125rem); } }',
+);
 line('}');
 line();
 

@@ -28,7 +28,9 @@ try {
       JOIN pg_policy  p ON p.polrelid = c.oid
       WHERE n.nspname = 'public' AND c.relrowsecurity AND c.relforcerowsecurity
     `);
-    console.log(`Aislamiento verificado: ${counted[0].n} políticas activas sobre tablas con RLS forzada.`);
+    console.log(
+      `Aislamiento verificado: ${counted[0].n} políticas activas sobre tablas con RLS forzada.`,
+    );
     process.exit(0);
   }
 

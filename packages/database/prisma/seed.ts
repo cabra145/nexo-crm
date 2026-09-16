@@ -121,7 +121,14 @@ const DEV_PASSWORD_HASH = hashPassword(DEV_PASSWORD);
 /* ========================================================================== */
 
 async function seedPlans() {
-  const plans = [
+  // Tipado explícito: cada plan activa características distintas, y sin esto el
+  // compilador infiere una unión de objetos con claves opcionales `undefined`
+  // que no puede recorrer como un mapa clave → booleano.
+  // (`Omit` porque PlanCreateInput ya tiene un campo `features`: la relación con
+  // plan_feature. Aquí `features` es otra cosa, el mapa que se inserta después.)
+  const plans: Array<
+    Omit<Prisma.PlanCreateInput, 'features'> & { features: Record<string, boolean> }
+  > = [
     {
       code: 'free',
       name: 'Gratis',
@@ -139,7 +146,12 @@ async function seedPlans() {
       trialDays: 0,
       isDefault: false,
       sortOrder: 0,
-      features: { 'whatsapp': false, 'ai.rag': false, 'automation.visual': false, 'api.public': false },
+      features: {
+        whatsapp: false,
+        'ai.rag': false,
+        'automation.visual': false,
+        'api.public': false,
+      },
     },
     {
       code: 'starter',
@@ -158,7 +170,7 @@ async function seedPlans() {
       trialDays: 14,
       isDefault: true,
       sortOrder: 1,
-      features: { 'whatsapp': true, 'ai.rag': true, 'automation.visual': true, 'api.public': false },
+      features: { whatsapp: true, 'ai.rag': true, 'automation.visual': true, 'api.public': false },
     },
     {
       code: 'pro',
@@ -177,7 +189,13 @@ async function seedPlans() {
       trialDays: 14,
       isDefault: false,
       sortOrder: 2,
-      features: { 'whatsapp': true, 'ai.rag': true, 'automation.visual': true, 'api.public': true, 'custom_roles': true },
+      features: {
+        whatsapp: true,
+        'ai.rag': true,
+        'automation.visual': true,
+        'api.public': true,
+        custom_roles: true,
+      },
     },
     {
       code: 'business',
@@ -196,7 +214,14 @@ async function seedPlans() {
       trialDays: 30,
       isDefault: false,
       sortOrder: 3,
-      features: { 'whatsapp': true, 'ai.rag': true, 'automation.visual': true, 'api.public': true, 'custom_roles': true, 'sso': true },
+      features: {
+        whatsapp: true,
+        'ai.rag': true,
+        'automation.visual': true,
+        'api.public': true,
+        custom_roles: true,
+        sso: true,
+      },
     },
   ];
 
@@ -325,7 +350,7 @@ async function seedTenant(spec: TenantSpec, planId: string) {
       const rows = Object.entries(preset.permissions).map(([permission, scope]) => ({
         roleId: role.id,
         permission,
-        scope: scope as 'ALL' | 'TEAM' | 'OWN',
+        scope,
       }));
       await tx.rolePermission.createMany({ data: rows, skipDuplicates: true });
     }
@@ -374,7 +399,13 @@ async function seedTenant(spec: TenantSpec, planId: string) {
     }
 
     // Motivos de pérdida
-    const lostReasons = ['Precio', 'Eligió a un competidor', 'Sin presupuesto', 'Mal momento', 'Sin respuesta'];
+    const lostReasons = [
+      'Precio',
+      'Eligió a un competidor',
+      'Sin presupuesto',
+      'Mal momento',
+      'Sin respuesta',
+    ];
     const lostReasonIds = [];
     for (const [i, name] of lostReasons.entries()) {
       const r = await tx.lostReason.upsert({
@@ -491,7 +522,10 @@ async function seedTenant(spec: TenantSpec, planId: string) {
             name,
             city: pick(['Quito', 'Guayaquil', 'Cuenca', 'Ambato'], companies.length),
             country: 'EC',
-            industry: pick(['Logística', 'Manufactura', 'Construcción', 'Salud', 'Agro'], companies.length),
+            industry: pick(
+              ['Logística', 'Manufactura', 'Construcción', 'Salud', 'Agro'],
+              companies.length,
+            ),
           },
         }),
       );
@@ -499,17 +533,52 @@ async function seedTenant(spec: TenantSpec, planId: string) {
 
     // --- Contactos ---------------------------------------------------------
     const firstNames = [
-      'María', 'Juan', 'Andrea', 'Carlos', 'Paola', 'Diego', 'Gabriela', 'Luis',
-      'Verónica', 'Santiago', 'Daniela', 'Fernando', 'Cristina', 'Ricardo',
-      'Mónica', 'Esteban', 'Karla', 'Javier', 'Silvia', 'Marco',
+      'María',
+      'Juan',
+      'Andrea',
+      'Carlos',
+      'Paola',
+      'Diego',
+      'Gabriela',
+      'Luis',
+      'Verónica',
+      'Santiago',
+      'Daniela',
+      'Fernando',
+      'Cristina',
+      'Ricardo',
+      'Mónica',
+      'Esteban',
+      'Karla',
+      'Javier',
+      'Silvia',
+      'Marco',
     ];
     const lastNames = [
-      'Pérez', 'Gómez', 'Vásquez', 'Chávez', 'Andrade', 'Salazar', 'Moreno',
-      'Cedeño', 'Jaramillo', 'Paredes', 'Cabrera', 'Tapia', 'Vega', 'Zambrano',
+      'Pérez',
+      'Gómez',
+      'Vásquez',
+      'Chávez',
+      'Andrade',
+      'Salazar',
+      'Moreno',
+      'Cedeño',
+      'Jaramillo',
+      'Paredes',
+      'Cabrera',
+      'Tapia',
+      'Vega',
+      'Zambrano',
     ];
     const jobTitles = [
-      'Gerente General', 'Jefa de Compras', 'Director Comercial', 'Coordinador de TI',
-      'Gerente de Operaciones', 'Analista de Proyectos', 'Dueña', 'Contador',
+      'Gerente General',
+      'Jefa de Compras',
+      'Director Comercial',
+      'Coordinador de TI',
+      'Gerente de Operaciones',
+      'Analista de Proyectos',
+      'Dueña',
+      'Contador',
     ];
 
     const contacts = [];
@@ -567,8 +636,7 @@ async function seedTenant(spec: TenantSpec, planId: string) {
     for (let i = 0; i < Math.floor(spec.contactCount * 0.7); i++) {
       const contact = pick(contacts, i);
       // Reparto realista: la mayoría arriba del embudo, pocas cerradas.
-      const stageIndex =
-        i % 11 === 0 ? 5 : i % 13 === 0 ? 6 : i % 5;
+      const stageIndex = i % 11 === 0 ? 5 : i % 13 === 0 ? 6 : i % 5;
       const stage = pick(stages, stageIndex);
       const value = 800 + ((i * 673) % 14_000);
       const isClosed = stage.type !== 'OPEN';
@@ -682,14 +750,58 @@ async function seedTenant(spec: TenantSpec, planId: string) {
     });
 
     const widgets = [
-      { type: 'KPI' as const, title: 'Oportunidades abiertas', query: { metric: 'deal.count', filter: { status: 'OPEN' } } },
-      { type: 'KPI' as const, title: 'Valor del embudo', query: { metric: 'deal.sum', field: 'value', filter: { status: 'OPEN' } } },
-      { type: 'KPI' as const, title: 'Ganado este mes', query: { metric: 'deal.sum', field: 'value', filter: { status: 'WON' }, range: 'month' } },
-      { type: 'KPI' as const, title: 'Tasa de conversión', query: { metric: 'deal.winRate', range: 'quarter' } },
-      { type: 'FUNNEL' as const, title: 'Embudo por etapa', query: { metric: 'deal.count', groupBy: 'stage' } },
-      { type: 'LINE' as const, title: 'Ventas por semana', query: { metric: 'deal.sum', field: 'value', groupBy: 'week', filter: { status: 'WON' }, range: 'quarter' } },
-      { type: 'BAR' as const, title: 'Ranking por vendedor', query: { metric: 'deal.sum', field: 'value', groupBy: 'owner', filter: { status: 'WON' }, range: 'month' } },
-      { type: 'PIE' as const, title: 'Origen de los leads', query: { metric: 'contact.count', groupBy: 'source' } },
+      {
+        type: 'KPI' as const,
+        title: 'Oportunidades abiertas',
+        query: { metric: 'deal.count', filter: { status: 'OPEN' } },
+      },
+      {
+        type: 'KPI' as const,
+        title: 'Valor del embudo',
+        query: { metric: 'deal.sum', field: 'value', filter: { status: 'OPEN' } },
+      },
+      {
+        type: 'KPI' as const,
+        title: 'Ganado este mes',
+        query: { metric: 'deal.sum', field: 'value', filter: { status: 'WON' }, range: 'month' },
+      },
+      {
+        type: 'KPI' as const,
+        title: 'Tasa de conversión',
+        query: { metric: 'deal.winRate', range: 'quarter' },
+      },
+      {
+        type: 'FUNNEL' as const,
+        title: 'Embudo por etapa',
+        query: { metric: 'deal.count', groupBy: 'stage' },
+      },
+      {
+        type: 'LINE' as const,
+        title: 'Ventas por semana',
+        query: {
+          metric: 'deal.sum',
+          field: 'value',
+          groupBy: 'week',
+          filter: { status: 'WON' },
+          range: 'quarter',
+        },
+      },
+      {
+        type: 'BAR' as const,
+        title: 'Ranking por vendedor',
+        query: {
+          metric: 'deal.sum',
+          field: 'value',
+          groupBy: 'owner',
+          filter: { status: 'WON' },
+          range: 'month',
+        },
+      },
+      {
+        type: 'PIE' as const,
+        title: 'Origen de los leads',
+        query: { metric: 'contact.count', groupBy: 'source' },
+      },
     ];
     for (const [i, widget] of widgets.entries()) {
       await tx.widget.create({

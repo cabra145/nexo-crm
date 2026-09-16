@@ -44,6 +44,9 @@ export class ZodValidationPipe<T extends ZodTypeAny> implements PipeTransform {
       );
     }
 
+    // `z.infer<T>` con `T extends ZodTypeAny` es `any` para el compilador, pero
+    // el valor ya pasó por `safeParse`: tiene exactamente la forma del esquema.
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-return
     return result.data;
   }
 }

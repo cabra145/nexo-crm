@@ -1,5 +1,6 @@
 import { emailJobSchema, QUEUE_NAMES } from '@nexo/contracts';
 import nodemailer, { type Transporter } from 'nodemailer';
+import type SMTPPool from 'nodemailer/lib/smtp-pool';
 import { env } from '../bootstrap/env';
 import { maskEmail } from '../lib/logger';
 import { defineProcessor } from '../lib/processor';
@@ -8,9 +9,9 @@ import { defineProcessor } from '../lib/processor';
  * Se crea al primer envío y se reutiliza. `pool` mantiene abiertas unas pocas
  * conexiones SMTP en vez de abrir una por correo.
  */
-let transporter: Transporter | null = null;
+let transporter: Transporter<SMTPPool.SentMessageInfo> | null = null;
 
-function getTransporter(): Transporter {
+function getTransporter(): Transporter<SMTPPool.SentMessageInfo> {
   if (transporter) return transporter;
 
   if (!env.SMTP_HOST || !env.SMTP_PORT || !env.SMTP_FROM) {

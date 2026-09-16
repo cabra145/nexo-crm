@@ -121,7 +121,10 @@ export const uuidSchema = z.string().uuid('identificador inválido');
  */
 export const phoneE164Schema = z
   .string()
-  .regex(/^\+[1-9]\d{6,14}$/, 'el teléfono debe estar en formato internacional, p. ej. +593987654321');
+  .regex(
+    /^\+[1-9]\d{6,14}$/,
+    'el teléfono debe estar en formato internacional, p. ej. +593987654321',
+  );
 
 export const emailSchema = z
   .string()
@@ -154,11 +157,44 @@ export const slugSchema = z
 
 /** Rutas que no pueden ser el identificador de una empresa. */
 export const RESERVED_SLUGS = new Set([
-  'admin', 'api', 'app', 'www', 'mail', 'ftp', 'login', 'logout', 'register',
-  'registro', 'auth', 'static', 'assets', 'public', 'health', 'status', 'docs',
-  'help', 'support', 'soporte', 'blog', 'about', 'pricing', 'precios', 'legal',
-  'privacy', 'terms', 'w', 'workspace', 'settings', 'ajustes', 'billing',
-  'nexo', 'system', 'root', 'test', 'dev', 'staging',
+  'admin',
+  'api',
+  'app',
+  'www',
+  'mail',
+  'ftp',
+  'login',
+  'logout',
+  'register',
+  'registro',
+  'auth',
+  'static',
+  'assets',
+  'public',
+  'health',
+  'status',
+  'docs',
+  'help',
+  'support',
+  'soporte',
+  'blog',
+  'about',
+  'pricing',
+  'precios',
+  'legal',
+  'privacy',
+  'terms',
+  'w',
+  'workspace',
+  'settings',
+  'ajustes',
+  'billing',
+  'nexo',
+  'system',
+  'root',
+  'test',
+  'dev',
+  'staging',
 ]);
 
 export const isoDateSchema = z.coerce.date();
@@ -192,7 +228,17 @@ export const countrySchema = z
  * Prisma por un constructor con lista blanca de campos. El usuario nunca
  * escribe SQL ni nombres de columna libres.
  */
-export const FILTER_OPERATORS = ['eq', 'ne', 'gt', 'gte', 'lt', 'lte', 'in', 'contains', 'null'] as const;
+export const FILTER_OPERATORS = [
+  'eq',
+  'ne',
+  'gt',
+  'gte',
+  'lt',
+  'lte',
+  'in',
+  'contains',
+  'null',
+] as const;
 export type FilterOperator = (typeof FILTER_OPERATORS)[number];
 
 export const searchSchema = z.object({

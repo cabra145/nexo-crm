@@ -63,8 +63,15 @@ export class ProblemDetailsFilter implements ExceptionFilter {
     if (exception instanceof Prisma.PrismaClientKnownRequestError) {
       switch (exception.code) {
         case 'P2002': {
-          const target = exception.meta?.target;
-          const fields = Array.isArray(target) ? target.join(', ') : String(target ?? '');
+          // `meta.target` es la lista de columnas o el nombre del índice, según
+          // la restricción. Cualquier otra cosa no se muestra: un objeto
+          // convertido a texto saldría como "[object Object]".
+          const target: unknown = exception.meta?.target;
+          const fields = Array.isArray(target)
+            ? target.filter((t): t is string => typeof t === 'string').join(', ')
+            : typeof target === 'string'
+              ? target
+              : '';
           return {
             type: PROBLEM_TYPES.CONFLICT,
             title: 'Registro duplicado',
@@ -95,12 +102,18 @@ export class ProblemDetailsFilter implements ExceptionFilter {
     if (exception instanceof HttpException) {
       const status = exception.getStatus();
       const body = exception.getResponse();
+      // Nest devuelve el cuerpo como texto, o como objeto con `message` en
+      // forma de texto o de lista. Se usa sólo lo que sea texto de verdad.
+      const message: unknown =
+        typeof body === 'object' && body !== null && 'message' in body ? body.message : undefined;
       const detail =
         typeof body === 'string'
           ? body
-          : Array.isArray((body as { message?: unknown }).message)
-            ? ((body as { message: string[] }).message).join('. ')
-            : String((body as { message?: unknown }).message ?? exception.message);
+          : Array.isArray(message)
+            ? message.filter((m): m is string => typeof m === 'string').join('. ')
+            : typeof message === 'string'
+              ? message
+              : exception.message;
 
       return {
         type: typeForStatus(status),
@@ -123,26 +136,42 @@ export class ProblemDetailsFilter implements ExceptionFilter {
 
 function typeForStatus(status: number): string {
   switch (status) {
-    case 400: return PROBLEM_TYPES.VALIDATION;
-    case 401: return PROBLEM_TYPES.UNAUTHORIZED;
-    case 402: return PROBLEM_TYPES.QUOTA_EXCEEDED;
-    case 403: return PROBLEM_TYPES.FORBIDDEN;
-    case 404: return PROBLEM_TYPES.NOT_FOUND;
-    case 409: return PROBLEM_TYPES.CONFLICT;
-    case 429: return PROBLEM_TYPES.RATE_LIMITED;
-    default: return status >= 500 ? PROBLEM_TYPES.INTERNAL : 'about:blank';
+    case 400:
+      return PROBLEM_TYPES.VALIDATION;
+    case 401:
+      return PROBLEM_TYPES.UNAUTHORIZED;
+    case 402:
+      return PROBLEM_TYPES.QUOTA_EXCEEDED;
+    case 403:
+      return PROBLEM_TYPES.FORBIDDEN;
+    case 404:
+      return PROBLEM_TYPES.NOT_FOUND;
+    case 409:
+      return PROBLEM_TYPES.CONFLICT;
+    case 429:
+      return PROBLEM_TYPES.RATE_LIMITED;
+    default:
+      return status >= 500 ? PROBLEM_TYPES.INTERNAL : 'about:blank';
   }
 }
 
 function titleForStatus(status: number): string {
   switch (status) {
-    case 400: return 'Petición no válida';
-    case 401: return 'Sesión no iniciada';
-    case 402: return 'Límite del plan alcanzado';
-    case 403: return 'Sin permiso';
-    case 404: return 'No encontrado';
-    case 409: return 'Conflicto';
-    case 429: return 'Demasiadas peticiones';
-    default: return status >= 500 ? 'Error interno' : 'Error';
+    case 400:
+      return 'Petición no válida';
+    case 401:
+      return 'Sesión no iniciada';
+    case 402:
+      return 'Límite del plan alcanzado';
+    case 403:
+      return 'Sin permiso';
+    case 404:
+      return 'No encontrado';
+    case 409:
+      return 'Conflicto';
+    case 429:
+      return 'Demasiadas peticiones';
+    default:
+      return status >= 500 ? 'Error interno' : 'Error';
   }
 }
