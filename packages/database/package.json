@@ -15,7 +15,7 @@
     }
   },
   "scripts": {
-    "build": "prisma generate && tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json",
     "dev": "tsc -p tsconfig.build.json --watch --preserveWatchOutput",
     "generate": "prisma generate",
     "prisma": "node --env-file-if-exists=../../.env ./node_modules/prisma/build/index.js",

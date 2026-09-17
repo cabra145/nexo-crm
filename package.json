@@ -22,9 +22,9 @@
     "docker:dev": "docker compose --env-file .env -f infra/compose.yml up -d",
     "docker:dev:down": "docker compose --env-file .env -f infra/compose.yml down",
     "docker:logs": "docker compose --env-file .env -f infra/compose.yml logs -f",
-    "format": "prettier --write .",
+    "format": "turbo run build --filter=@nexo/design --output-logs=errors-only && prettier --write .",
     "clean": "turbo run clean && rm -rf node_modules",
-    "format:check": "prettier --check .",
+    "format:check": "turbo run build --filter=@nexo/design --output-logs=errors-only && prettier --check .",
     "check": "pnpm format:check && turbo run lint typecheck",
     "ci:local": "bash infra/scripts/ci-local.sh"
   },
