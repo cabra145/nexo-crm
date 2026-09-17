@@ -348,6 +348,7 @@ async function seedTenant(spec: TenantSpec, planId: string) {
       roleByKey.set(preset.key, role.id);
 
       const rows = Object.entries(preset.permissions).map(([permission, scope]) => ({
+        tenantId: tenant.id,
         roleId: role.id,
         permission,
         scope,

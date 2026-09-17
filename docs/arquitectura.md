@@ -65,8 +65,8 @@ El plan sumó mal los dominios. El desglose real:
 | Analítica e infraestructura |      6 |
 | **Total**                   | **66** |
 
-De ellas, **55 llevan `tenant_id` obligatorio** y política RLS (el plan decía
-41). `tenant` tiene política propia contra su clave primaria, y 10 quedan fuera
+De ellas, **55 llevaban `tenant_id` obligatorio** y política RLS en la Fase 0 (el
+plan decía 41); **57 desde el bloque 1.1**. `tenant` tiene política propia contra su clave primaria, y 10 quedan fuera
 por motivos escritos en `_rls_excluded_tables()`.
 
 ### Con RLS forzada, nadie podía crear una empresa
@@ -80,35 +80,58 @@ Corregido separando el `INSERT` del resto: crear una empresa se permite
 siempre, y `SELECT` / `UPDATE` / `DELETE` siguen restringidos a la fila propia.
 Cualquiera puede registrarse; nadie puede leer ni tocar la empresa de otro.
 
-### …y la corrección anterior no basta: pendiente para la Fase 1
+### Alta de empresas sin privilegios — resuelto en el bloque 1.1
 
-Separar el `INSERT` de `tenant` no es suficiente. Prisma crea filas con
-`INSERT ... RETURNING`, y Postgres exige que la fila **devuelta** pase la
-política de **lectura**, que sólo deja ver la empresa del contexto activo. Al
-registrarse no hay contexto, así que el `INSERT` se rechazaría igual.
+El `INSERT … RETURNING` que usa Prisma exige que la fila devuelta pase la
+política de **lectura** de `tenant`, que sólo deja ver la empresa del contexto.
+Al registrarse no parecía haber contexto, así que la Fase 0 permitió el INSERT
+sin condición (`WITH CHECK (true)`) y anotó que el registro necesitaría una vía
+privilegiada.
 
-Lo mismo le ocurre al panel de plataforma: listar todas las empresas es, por
-definición, leer sin contexto de empresa.
+No hace falta. El id de la empresa se genera **antes** de insertarla
+(`SELECT uuid_generate_v7()`), se fija como contexto y se inserta con ese id: la
+fila pasa la política como cualquier otra. `runInNewTenantTransaction()`
+encapsula el patrón, corre con el rol de aplicación sin permisos especiales, y
+la política de INSERT vuelve a ser estricta: `WITH CHECK (id = current_tenant_id())`.
 
-- **Seed y migraciones:** resuelto. Conectan con el rol dueño, que en
-  desarrollo es superusuario y no está sujeto a RLS.
-- **Registro y panel de plataforma:** a resolver en la Fase 1 con una vía
-  privilegiada y acotada — un rol `nexo_platform` usado sólo por esos dos
-  módulos, o funciones `SECURITY DEFINER` para las operaciones concretas — en
-  lugar de relajar la política de `tenant` para todo el mundo.
+El **panel de plataforma** sí necesita leer todas las empresas, así que ahí la
+vía privilegiada es inevitable. Se diseña en la Fase 6, con una restricción a
+tener en cuenta: en Postgres gestionado (AWS RDS y similares) normalmente no se
+puede crear un rol con `BYPASSRLS`; puede requerir funciones `SECURITY DEFINER`
+acotadas a las consultas del panel.
 
-### `role_permission` no lleva `tenant_id`: pendiente para la Fase 1
+### `role_permission` y `subscription_invoice` sin `tenant_id` — resuelto en el bloque 1.1
 
-Llega a la empresa sólo a través de `role`, que sí tiene RLS. Una consulta
-directa a `role_permission` vería la configuración de permisos de todas las
-empresas. El dato es poco sensible, pero rompe la regla de aislamiento por
-construcción, y `verify_tenant_isolation()` no puede detectarlo porque sólo
-inspecciona tablas que **tienen** `tenant_id`.
+Ambas llegaban a la empresa sólo a través de su tabla padre (`role`,
+`subscription`), así que una consulta directa veía las de todas las empresas.
+`subscription_invoice` además estaba excluida de la RLS a mano.
 
-Corrección prevista al empezar la Fase 1: añadir `tenantId` a `RolePermission`
-(queda cubierta automáticamente por RLS) y ampliar la verificación para que
-señale toda tabla con clave foránea hacia una tabla protegida que no tenga
-política propia.
+- Las dos llevan `tenant_id` y RLS: **57 tablas protegidas** (antes 55).
+- Claves foráneas **compuestas** `(tenant_id, role_id) → role(tenant_id, id)`:
+  la base de datos impide colgar una fila de una empresa del padre de otra,
+  incluso al rol dueño, que no está sujeto a RLS.
+- `verify_tenant_isolation()` tiene una comprobación nueva: señala toda tabla
+  con clave foránea hacia una tabla protegida que **no** tenga `tenant_id`
+  propio. Las comprobaciones anteriores sólo veían tablas que ya lo tenían.
+- La migración rellena `tenant_id` desde la tabla padre en tres tiempos
+  (opcional → UPDATE → NOT NULL), probada sobre una base sembrada con 278
+  permisos.
+
+### No se usa `prisma migrate dev` — descubierto en el bloque 1.1
+
+Los índices GIN (texto, trigram, jsonb) y HNSW (vectores) se crean desde
+`prisma/sql/02_search_and_indexes.sql` porque `schema.prisma` no puede
+declararlos. `prisma migrate dev` compara la base **real** con el historial de
+migraciones, los ve como una desviación y **ofrece reiniciar la base de datos**.
+No ocurrió antes sólo porque esos índices se aplicaron después de la última
+migración.
+
+- **Aplicar migraciones:** `pnpm db:migrate` → `migrate deploy` + scripts SQL.
+  Nunca propone reiniciar; es lo mismo que usan el CI y producción.
+- **Crear una migración:** `pnpm db:migration:new <nombre>`. Compara el
+  **historial** con el esquema sobre una base auxiliar (`<base>_shadow`), así que
+  la base real no interviene, y avisa del SQL que falla sobre tablas con datos
+  (`ADD COLUMN … NOT NULL`) o que borra datos.
 
 ### El particionado de `message` queda aplazado
 

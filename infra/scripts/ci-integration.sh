@@ -108,6 +108,9 @@ pnpm --silent --filter @nexo/database seed || fail "seed"
 step "Prueba de aislamiento contra la base real"
 pnpm --silent --filter @nexo/database test:isolation || fail "test:isolation"
 
+step "Alta de empresa con Prisma y el rol de aplicación"
+pnpm --silent --filter @nexo/database test:tenant-creation || fail "test:tenant-creation"
+
 # --- 2 · API ------------------------------------------------------------------
 step "API"
 node apps/api/dist/main.js > "$CI_LOG_DIR/api.log" 2>&1 &

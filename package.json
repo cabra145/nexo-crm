@@ -15,6 +15,7 @@
     "test:isolation": "pnpm --filter @nexo/database run test:isolation",
     "db:generate": "pnpm --filter @nexo/database run generate",
     "db:migrate": "pnpm --filter @nexo/database run migrate",
+    "db:migration:new": "pnpm --filter @nexo/database run migration:new",
     "db:deploy": "pnpm --filter @nexo/database run deploy",
     "db:seed": "pnpm --filter @nexo/database run seed",
     "db:reset": "pnpm --filter @nexo/database run reset",

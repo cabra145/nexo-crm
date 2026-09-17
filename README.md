@@ -113,6 +113,22 @@ y comprueba que no existe ni rastro de los datos de Acme.
 
 ---
 
+## Cambiar el esquema de la base de datos
+
+1. Edita `packages/database/prisma/schema.prisma`.
+2. `pnpm db:migration:new nombre_descriptivo` genera la migración y avisa si el
+   SQL fallaría sobre tablas con datos o si borra datos.
+3. Revísala, y reescríbela si hace falta (ver
+   `prisma/migrations/20260917000000_tenant_id_en_permisos_y_facturas`).
+4. `pnpm db:migrate` la aplica, junto con las políticas RLS de las tablas nuevas.
+
+> **No ejecutes `prisma migrate dev`.** Ve como sobrantes los índices de búsqueda
+> y de vectores que se crean por SQL, y ofrece **reiniciar la base de datos**,
+> borrando todos los datos. El motivo completo está en
+> [`docs/arquitectura.md`](docs/arquitectura.md).
+
+---
+
 ## Cómo se aíslan las empresas
 
 Es la decisión de la que depende todo lo demás, así que conviene entenderla
@@ -184,19 +200,20 @@ está nada.
 
 ## Comandos
 
-| Comando           | Qué hace                                                        |
-| ----------------- | --------------------------------------------------------------- |
-| `pnpm dev`        | Web, API y worker con recarga en caliente                       |
-| `pnpm build`      | Compila todo                                                    |
-| `pnpm typecheck`  | Comprueba tipos en todo el monorepo                             |
-| `pnpm lint`       | ESLint con información de tipos y reglas de seguridad           |
-| `pnpm format`     | Aplica el formato de Prettier                                   |
-| `pnpm check`      | **Formato + lint + tipos: el trabajo "Calidad" del CI**         |
-| `pnpm ci:local`   | **La integración completa del CI, en contenedores desechables** |
-| `pnpm db:migrate` | Migraciones + scripts SQL (RLS, triggers, índices)              |
-| `pnpm db:seed`    | Datos de desarrollo                                             |
-| `pnpm db:reset`   | Borra, migra y siembra de cero                                  |
-| `pnpm db:studio`  | Explorador visual de la base de datos                           |
+| Comando                          | Qué hace                                                             |
+| -------------------------------- | -------------------------------------------------------------------- |
+| `pnpm dev`                       | Web, API y worker con recarga en caliente                            |
+| `pnpm build`                     | Compila todo                                                         |
+| `pnpm typecheck`                 | Comprueba tipos en todo el monorepo                                  |
+| `pnpm lint`                      | ESLint con información de tipos y reglas de seguridad                |
+| `pnpm format`                    | Aplica el formato de Prettier                                        |
+| `pnpm check`                     | **Formato + lint + tipos: el trabajo "Calidad" del CI**              |
+| `pnpm ci:local`                  | **La integración completa del CI, en contenedores desechables**      |
+| `pnpm db:migrate`                | Aplica migraciones pendientes + scripts SQL (RLS, triggers, índices) |
+| `pnpm db:migration:new <nombre>` | **Genera una migración** a partir de los cambios en `schema.prisma`  |
+| `pnpm db:seed`                   | Datos de desarrollo                                                  |
+| `pnpm db:reset`                  | Borra, migra y siembra de cero                                       |
+| `pnpm db:studio`                 | Explorador visual de la base de datos                                |
 
 ---
 

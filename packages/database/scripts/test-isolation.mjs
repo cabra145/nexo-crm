@@ -257,7 +257,68 @@ async function main() {
   check('contexto vacío → 0 filas', (await count(app, `SELECT count(*) n FROM contact`)) === 0);
   await app.query('ROLLBACK');
 
+  console.log('\n8 · Alta de empresa: sólo la del contexto activo');
+  {
+    const { rows } = await app.query('SELECT uuid_generate_v7()::text AS id');
+    const newId = rows[0].id;
+
+    await app.query('BEGIN');
+    await expectRejected(app, 'insertar una empresa SIN contexto', () =>
+      app.query(
+        `INSERT INTO tenant (id, slug, name, updated_at) VALUES ($1, $2, 'Sin contexto', now())`,
+        [newId, `prueba-${newId.slice(-12)}`],
+      ),
+    );
+    await app.query('ROLLBACK');
+
+    await app.query('BEGIN');
+    await app.query(`SELECT set_config('app.tenant_id', $1, true)`, [newId]);
+    await expectAllowed(
+      app,
+      'control: con el contexto de su propio id, SÍ se inserta',
+      async () => {
+        // RETURNING, como hace Prisma: la fila devuelta también debe pasar la
+        // política de lectura. Era lo que hacía imposible el registro.
+        const { rows: created } = await app.query(
+          `INSERT INTO tenant (id, slug, name, updated_at) VALUES ($1, $2, 'Con contexto', now()) RETURNING id`,
+          [newId, `prueba-${newId.slice(-12)}`],
+        );
+        if (created[0]?.id !== newId) throw new Error('RETURNING no devolvió la fila');
+      },
+    );
+    await expectRejected(app, 'con contexto de una empresa, insertar OTRA empresa', () =>
+      app.query(
+        `INSERT INTO tenant (id, slug, name, updated_at) VALUES (uuid_generate_v7(), $1, 'Otra', now())`,
+        [`otra-${newId.slice(-12)}`],
+      ),
+    );
+    await app.query('ROLLBACK');
+  }
+
   await app.end();
+
+  console.log('\n9 · La verificación detecta tablas con datos de empresa sin tenant_id');
+  {
+    // Se simula el error que tuvo role_permission: una tabla hija que cuelga de
+    // una tabla protegida sin tener tenant_id propio. Todo dentro de una
+    // transacción que se deshace: la tabla nunca llega a existir.
+    const ownerCheck = new pg.Client({ connectionString: clean(OWNER_URL) });
+    await ownerCheck.connect();
+    await ownerCheck.query('BEGIN');
+    await ownerCheck.query(
+      'CREATE TABLE prueba_hija_sin_tenant (id uuid PRIMARY KEY, contact_id uuid REFERENCES contact(id))',
+    );
+    const { rows: found } = await ownerCheck.query(
+      `SELECT problem FROM verify_tenant_isolation() WHERE table_name = 'prueba_hija_sin_tenant'`,
+    );
+    await ownerCheck.query('ROLLBACK');
+    await ownerCheck.end();
+    check(
+      'una tabla que referencia a contact sin tenant_id se señala como agujero',
+      found.length > 0,
+      found[0]?.problem ?? 'no la detectó',
+    );
+  }
 
   // --- Resumen ---------------------------------------------------------------
   const failed = results.filter((r) => !r.passed);

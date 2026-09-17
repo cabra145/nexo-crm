@@ -38,7 +38,6 @@ AS $$
     'plan',
     'plan_feature',
     'platform_admin',
-    'subscription_invoice',   -- alcanzada vía subscription, que sí lleva RLS
     '_prisma_migrations',
 
     -- `tenant` no se filtra por tenant_id (no lo tiene): lleva su propia
@@ -123,17 +122,20 @@ $$;
 --  No tiene `tenant_id` porque ELLA es la empresa. Su política compara contra
 --  su propia clave primaria, de modo que una sesión sólo ve su propia fila.
 --
---  El INSERT va aparte, y esto NO es un descuido:
+--  Dar de alta una empresa NO necesita permisos especiales, aunque en el
+--  momento de registrarse todavía no exista la empresa a la que pertenecer:
 --
---  Registrarse es, por definición, la única operación que ocurre ANTES de que
---  exista la empresa a la que pertenecer. Con una política única `FOR ALL`
---  cuyo WITH CHECK exigiera `id = current_tenant_id()`, crear una empresa sería
---  imposible para todo el mundo —incluido el propio registro y el seed— porque
---  en ese instante no hay contexto que fijar.
+--    1. se genera el id ANTES de insertar     SELECT uuid_generate_v7()
+--    2. se fija ese id como contexto          set_config('app.tenant_id', id, true)
+--    3. se inserta la empresa con ese id      INSERT INTO tenant (id, …)
 --
---  Así que el INSERT se permite siempre, y las otras tres operaciones siguen
---  restringidas a la fila propia. El resultado: cualquiera puede darse de alta,
---  nadie puede leer, modificar ni borrar la empresa de otro.
+--  Así el INSERT cumple la misma regla que todo lo demás —sólo la fila del
+--  contexto—, y también el RETURNING que usa Prisma, que exige que la fila
+--  devuelta pase la política de LECTURA.
+--
+--  (Una versión anterior permitía el INSERT sin condición, `WITH CHECK (true)`,
+--  porque parecía la única forma de registrarse. No lo era, y esa excepción
+--  dejaba insertar empresas arbitrarias desde cualquier sesión.)
 -- ----------------------------------------------------------------------------
 ALTER TABLE public.tenant ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.tenant FORCE  ROW LEVEL SECURITY;
@@ -148,7 +150,7 @@ CREATE POLICY tenant_select ON public.tenant
   FOR SELECT USING (id = current_tenant_id());
 
 CREATE POLICY tenant_insert ON public.tenant
-  FOR INSERT WITH CHECK (true);
+  FOR INSERT WITH CHECK (id = current_tenant_id());
 
 CREATE POLICY tenant_update ON public.tenant
   FOR UPDATE
@@ -251,6 +253,31 @@ AS $$
          'el rol de aplicación tiene BYPASSRLS'::text
   FROM pg_roles
   WHERE rolname = 'nexo_app' AND rolbypassrls
+
+  UNION ALL
+
+  -- (f) Tablas con datos de empresa SIN columna tenant_id.
+  --
+  --     Las comprobaciones (a)–(c) sólo ven tablas que YA tienen tenant_id. Una
+  --     tabla hija que llega a la empresa a través de su padre —como era
+  --     role_permission a través de role— les es invisible, y queda fuera de
+  --     la RLS sin que nada avise. La señal es estructural: tiene una clave
+  --     foránea hacia una tabla protegida, pero no tiene tenant_id propio.
+  SELECT DISTINCT c.relname::text,
+         format('referencia a %I, que está protegida, pero no tiene tenant_id propio: queda fuera de la RLS', rc.relname)
+  FROM pg_constraint k
+  JOIN pg_class c      ON c.oid = k.conrelid
+  JOIN pg_namespace n  ON n.oid = c.relnamespace
+  JOIN pg_class rc     ON rc.oid = k.confrelid
+  WHERE k.contype = 'f'
+    AND n.nspname = 'public'
+    AND c.relkind IN ('r', 'p')
+    AND rc.relrowsecurity
+    AND c.relname <> ALL (_rls_excluded_tables())
+    AND NOT EXISTS (
+      SELECT 1 FROM pg_attribute a
+      WHERE a.attrelid = c.oid AND a.attname = 'tenant_id' AND a.attnotnull AND NOT a.attisdropped
+    )
 
   UNION ALL
 

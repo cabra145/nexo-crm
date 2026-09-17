@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { Prisma, PrismaClient } from '@prisma/client';
-import { getTenantContext, requireTenantId } from './tenant-context';
+import { getTenantContext, requireTenantId, runWithTenantContext } from './tenant-context';
 
 /* ============================================================================
  *  CAPA 2 DEL AISLAMIENTO · Ámbito automático de empresa en Prisma
@@ -121,9 +121,13 @@ function createBaseClient(): PrismaClient {
 /**
  * Cliente sin ámbito de empresa.
  *
- * Úsalo SÓLO para: autenticación (antes de saber la empresa), el panel de
- * plataforma, migraciones y trabajos de mantenimiento. Cualquier otro uso es
- * un agujero de aislamiento esperando a ocurrir.
+ * Úsalo SÓLO para tablas sin empresa: identidad (`user`, tokens de sesión y de
+ * correo), planes y webhooks entrantes antes de resolverlos. Cualquier otro uso
+ * es un agujero de aislamiento esperando a ocurrir.
+ *
+ * NO sirve para el panel de plataforma: listar todas las empresas exige leer
+ * sin contexto, y la RLS lo impide también aquí. Esa vía privilegiada se
+ * diseña en la Fase 6 (ver docs/arquitectura.md).
  *
  * Nota: aunque este cliente no filtre por aplicación, sigue conectando con el
  * rol `nexo_app`, que NO tiene BYPASSRLS. Si `app.tenant_id` no está fijado,
@@ -258,6 +262,43 @@ export async function runInTenantTransaction<T>(
       timeout: options?.timeout ?? 15_000,
       isolationLevel: options?.isolationLevel,
     },
+  );
+}
+
+/**
+ * Da de alta una empresa NUEVA y ejecuta `fn` dentro de su contexto, en una
+ * sola transacción.
+ *
+ * Es la única forma correcta de crear una empresa, porque la política RLS de
+ * `tenant` sólo admite insertar la fila de la empresa del contexto activo:
+ *
+ *   1. se pide a Postgres un id nuevo (UUID v7) ANTES de insertar nada,
+ *   2. se fija como contexto de la transacción,
+ *   3. `fn` recibe ese id: crea la empresa con él y, a continuación, todo lo
+ *      que le pertenece (roles, membresía, embudo…) con el aislamiento normal.
+ *
+ * No necesita ningún rol privilegiado: corre con `nexo_app`, como el resto de
+ * la aplicación. Si `fn` falla, no queda nada a medias.
+ *
+ * @example
+ * const tenant = await runInNewTenantTransaction(async (tx, tenantId) => {
+ *   const created = await tx.tenant.create({ data: { id: tenantId, slug, name } });
+ *   await tx.role.create({ data: { key: 'OWNER', name: 'Propietario', isSystem: true } });
+ *   return created;
+ * });
+ */
+export async function runInNewTenantTransaction<T>(
+  fn: (tx: TenantTransactionClient, tenantId: string) => Promise<T>,
+  options?: { timeout?: number },
+): Promise<T> {
+  const [row] = await platformPrisma.$queryRaw<Array<{ id: string }>>`
+    SELECT uuid_generate_v7()::text AS id
+  `;
+  if (!row) throw new Error('Postgres no devolvió un id para la empresa nueva');
+  const tenantId = row.id;
+
+  return runWithTenantContext({ tenantId, actorType: 'SYSTEM' }, () =>
+    runInTenantTransaction((tx) => fn(tx, tenantId), options),
   );
 }
 

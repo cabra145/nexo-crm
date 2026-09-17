@@ -9,6 +9,7 @@ export {
   prisma,
   platformPrisma,
   runInTenantTransaction,
+  runInNewTenantTransaction,
   verifyTenantIsolation,
   getTenantScopedModels,
   disconnectDatabase,

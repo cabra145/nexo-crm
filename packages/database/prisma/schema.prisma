@@ -16,10 +16,11 @@
 // ============================================================================
 
 generator client {
-  provider        = "prisma-client-js" 
- previewFeatures = ["postgresqlExtensions", "relationJoins"]
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions", "relationJoins"]
   binaryTargets   = ["native", "linux-musl-arm64-openssl-3.0.x", "linux-musl-openssl-3.0.x"]
 }
+
 datasource db {
   provider   = "postgresql"
   // Rol `nexo_app`: lo usa la aplicación. Sin BYPASSRLS y sin permiso para
@@ -43,20 +44,20 @@ model Plan {
   name        String
   description String?
 
-  priceMonthly Decimal @default(0) @db.Decimal(10, 2) @map("price_monthly")
-  priceYearly  Decimal @default(0) @db.Decimal(10, 2) @map("price_yearly")
+  priceMonthly Decimal @default(0) @map("price_monthly") @db.Decimal(10, 2)
+  priceYearly  Decimal @default(0) @map("price_yearly") @db.Decimal(10, 2)
   currency     String  @default("USD") @db.Char(3)
 
   // Límites aplicados en caliente por el guard de cuotas.
   // -1 = ilimitado. Se leen desde caché de Redis, no de la BD, en cada petición.
-  maxUsers          Int @default(3) @map("max_users")
-  maxContacts       Int @default(1000) @map("max_contacts")
-  maxChannels       Int @default(1) @map("max_channels")
-  maxWorkflows      Int @default(3) @map("max_workflows")
-  maxAiSources      Int @default(10) @map("max_ai_sources")
-  maxStorageMb      Int @default(1024) @map("max_storage_mb")
-  monthlyAiCredits  Int @default(0) @map("monthly_ai_credits")
-  monthlyMessages   Int @default(1000) @map("monthly_messages")
+  maxUsers         Int @default(3) @map("max_users")
+  maxContacts      Int @default(1000) @map("max_contacts")
+  maxChannels      Int @default(1) @map("max_channels")
+  maxWorkflows     Int @default(3) @map("max_workflows")
+  maxAiSources     Int @default(10) @map("max_ai_sources")
+  maxStorageMb     Int @default(1024) @map("max_storage_mb")
+  monthlyAiCredits Int @default(0) @map("monthly_ai_credits")
+  monthlyMessages  Int @default(1000) @map("monthly_messages")
 
   isPublic  Boolean @default(true) @map("is_public") // visible en la página de precios
   isDefault Boolean @default(false) @map("is_default") // asignado al registrarse
@@ -66,9 +67,9 @@ model Plan {
   features      PlanFeature[]
   subscriptions Subscription[]
 
-  createdAt DateTime  @default(now()) @db.Timestamptz(6) @map("created_at")
-  updatedAt DateTime  @updatedAt @db.Timestamptz(6) @map("updated_at")
-  archivedAt DateTime? @db.Timestamptz(6) @map("archived_at")
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  archivedAt DateTime? @map("archived_at") @db.Timestamptz(6)
 
   @@index([isPublic, sortOrder])
   @@map("plan")
@@ -77,9 +78,9 @@ model Plan {
 /// Banderas de funcionalidad por plan. Separadas de los límites numéricos
 /// porque se consultan distinto: "¿puede usar IA?" vs "¿cuántos contactos?".
 model PlanFeature {
-  id      String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
-  planId  String @db.Uuid @map("plan_id")
-  plan    Plan   @relation(fields: [planId], references: [id], onDelete: Cascade)
+  id     String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  planId String @map("plan_id") @db.Uuid
+  plan   Plan   @relation(fields: [planId], references: [id], onDelete: Cascade)
 
   key     String // "ai.rag" | "automation.visual" | "whatsapp" | "api.public" | "custom_roles"
   enabled Boolean @default(true)
@@ -98,15 +99,15 @@ model Tenant {
   status TenantStatus @default(TRIAL)
 
   // Identidad visual, usada en la app, los correos y los PDFs.
-  logoUrl      String? @map("logo_url")
-  brandColor   String? @db.VarChar(9) @map("brand_color")
-  legalName    String? @db.VarChar(200) @map("legal_name")
-  taxId        String? @db.VarChar(40) @map("tax_id")
-  addressLine  String? @map("address_line")
-  city         String? @db.VarChar(120)
-  country      String? @db.Char(2)
-  phone        String? @db.VarChar(32)
-  website      String?
+  logoUrl     String? @map("logo_url")
+  brandColor  String? @map("brand_color") @db.VarChar(9)
+  legalName   String? @map("legal_name") @db.VarChar(200)
+  taxId       String? @map("tax_id") @db.VarChar(40)
+  addressLine String? @map("address_line")
+  city        String? @db.VarChar(120)
+  country     String? @db.Char(2)
+  phone       String? @db.VarChar(32)
+  website     String?
 
   timezone String @default("America/Guayaquil") @db.VarChar(64)
   locale   String @default("es") @db.VarChar(10)
@@ -116,49 +117,49 @@ model Tenant {
   /// invalidan por evento; nunca se leen dentro de un bucle.
   settings Json @default("{}") @db.JsonB
 
-  suspendedAt     DateTime? @db.Timestamptz(6) @map("suspended_at")
-  suspendedReason String? @map("suspended_reason")
-  deletedAt       DateTime? @db.Timestamptz(6) @map("deleted_at")
+  suspendedAt     DateTime? @map("suspended_at") @db.Timestamptz(6)
+  suspendedReason String?   @map("suspended_reason")
+  deletedAt       DateTime? @map("deleted_at") @db.Timestamptz(6)
 
-  createdAt DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
-  updatedAt DateTime @updatedAt @db.Timestamptz(6) @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  subscription   Subscription?
-  memberships    Membership[]
-  roles          Role[]
-  usage          TenantUsage[]
-  apiKeys        ApiKey[]
-  auditLogs      AuditLog[]
-  contacts       Contact[]
-  companies      Company[]
-  tags           Tag[]
-  customFields   CustomField[]
-  notes          Note[]
-  activities     Activity[]
-  pipelines      Pipeline[]
-  deals          Deal[]
-  products       Product[]
-  lostReasons    LostReason[]
-  channels       Channel[]
-  conversations  Conversation[]
-  messages       Message[]
-  waTemplates    WaTemplate[]
-  aiSources      AiSource[]
-  aiThreads      AiThread[]
-  aiUsage        AiUsage[]
-  aiSetting      AiSetting?
-  workflows      Workflow[]
-  documents      Document[]
-  taxRates       TaxRate[]
+  subscription    Subscription?
+  memberships     Membership[]
+  roles           Role[]
+  usage           TenantUsage[]
+  apiKeys         ApiKey[]
+  auditLogs       AuditLog[]
+  contacts        Contact[]
+  companies       Company[]
+  tags            Tag[]
+  customFields    CustomField[]
+  notes           Note[]
+  activities      Activity[]
+  pipelines       Pipeline[]
+  deals           Deal[]
+  products        Product[]
+  lostReasons     LostReason[]
+  channels        Channel[]
+  conversations   Conversation[]
+  messages        Message[]
+  waTemplates     WaTemplate[]
+  aiSources       AiSource[]
+  aiThreads       AiThread[]
+  aiUsage         AiUsage[]
+  aiSetting       AiSetting?
+  workflows       Workflow[]
+  documents       Document[]
+  taxRates        TaxRate[]
   numberSequences NumberSequence[]
-  docTemplates   DocTemplate[]
-  tasks          Task[]
-  events         Event[]
-  dashboards     Dashboard[]
-  savedViews     SavedView[]
-  notifications  Notification[]
-  files          File[]
-  outboundHooks  OutboundWebhook[]
+  docTemplates    DocTemplate[]
+  tasks           Task[]
+  events          Event[]
+  dashboards      Dashboard[]
+  savedViews      SavedView[]
+  notifications   Notification[]
+  files           File[]
+  outboundHooks   OutboundWebhook[]
 
   @@index([status])
   @@index([deletedAt])
@@ -175,10 +176,10 @@ enum TenantStatus {
 
 model Subscription {
   id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
-  tenantId String @unique @db.Uuid @map("tenant_id")
+  tenantId String @unique @map("tenant_id") @db.Uuid
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
-  planId String @db.Uuid @map("plan_id")
+  planId String @map("plan_id") @db.Uuid
   plan   Plan   @relation(fields: [planId], references: [id])
 
   status   SubscriptionStatus @default(TRIALING)
@@ -186,25 +187,27 @@ model Subscription {
 
   // Referencias a la pasarela. Nulas hasta la Fase 5: el modelo está
   // preparado pero ningún cobro está acoplado todavía.
-  providerName           String? @db.VarChar(40) @map("provider_name")
-  providerCustomerId     String? @db.VarChar(120) @map("provider_customer_id")
-  providerSubscriptionId String? @unique @db.VarChar(120) @map("provider_subscription_id")
+  providerName           String? @map("provider_name") @db.VarChar(40)
+  providerCustomerId     String? @map("provider_customer_id") @db.VarChar(120)
+  providerSubscriptionId String? @unique @map("provider_subscription_id") @db.VarChar(120)
 
-  currentPeriodStart DateTime  @default(now()) @db.Timestamptz(6) @map("current_period_start")
-  currentPeriodEnd   DateTime  @db.Timestamptz(6) @map("current_period_end")
-  trialEndsAt        DateTime? @db.Timestamptz(6) @map("trial_ends_at")
+  currentPeriodStart DateTime  @default(now()) @map("current_period_start") @db.Timestamptz(6)
+  currentPeriodEnd   DateTime  @map("current_period_end") @db.Timestamptz(6)
+  trialEndsAt        DateTime? @map("trial_ends_at") @db.Timestamptz(6)
   cancelAtPeriodEnd  Boolean   @default(false) @map("cancel_at_period_end")
-  canceledAt         DateTime? @db.Timestamptz(6) @map("canceled_at")
+  canceledAt         DateTime? @map("canceled_at") @db.Timestamptz(6)
 
   /// Sobrescribe límites del plan para un cliente concreto (acuerdos a medida).
   /// Se fusiona por encima del plan al calcular cuotas.
-  limitOverrides Json? @db.JsonB @map("limit_overrides")
+  limitOverrides Json? @map("limit_overrides") @db.JsonB
 
   invoices SubscriptionInvoice[]
 
-  createdAt DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
-  updatedAt DateTime @updatedAt @db.Timestamptz(6) @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
+  /// Destino de la clave foránea compuesta de subscription_invoice.
+  @@unique([tenantId, id])
   @@index([status, currentPeriodEnd])
   @@map("subscription")
 }
@@ -226,24 +229,29 @@ enum PlanInterval {
 /// Distinto de `Document`, que son las facturas que las empresas emiten a los suyos.
 model SubscriptionInvoice {
   id             String       @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
-  subscriptionId String       @db.Uuid @map("subscription_id")
-  subscription   Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  /// Empresa facturada. Antes la tabla estaba excluida del aislamiento a mano,
+  /// pero guarda las facturas de cada empresa: es dato de empresa y lleva RLS.
+  tenantId       String       @map("tenant_id") @db.Uuid
+  subscriptionId String       @map("subscription_id") @db.Uuid
+  /// FK compuesta: la factura y su suscripción pertenecen a la misma empresa.
+  subscription   Subscription @relation(fields: [tenantId, subscriptionId], references: [tenantId, id], onDelete: Cascade)
 
-  number   String   @unique @db.VarChar(40)
-  amount   Decimal  @db.Decimal(12, 2)
-  currency String   @default("USD") @db.Char(3)
-  status   String   @default("open") @db.VarChar(20) // open | paid | void | uncollectible
-  paidAt   DateTime? @db.Timestamptz(6) @map("paid_at")
-  dueAt    DateTime? @db.Timestamptz(6) @map("due_at")
-  pdfUrl   String? @map("pdf_url")
+  number   String    @unique @db.VarChar(40)
+  amount   Decimal   @db.Decimal(12, 2)
+  currency String    @default("USD") @db.Char(3)
+  status   String    @default("open") @db.VarChar(20) // open | paid | void | uncollectible
+  paidAt   DateTime? @map("paid_at") @db.Timestamptz(6)
+  dueAt    DateTime? @map("due_at") @db.Timestamptz(6)
+  pdfUrl   String?   @map("pdf_url")
 
-  providerInvoiceId String? @unique @db.VarChar(120) @map("provider_invoice_id")
+  providerInvoiceId String? @unique @map("provider_invoice_id") @db.VarChar(120)
 
-  periodStart DateTime @db.Timestamptz(6) @map("period_start")
-  periodEnd   DateTime @db.Timestamptz(6) @map("period_end")
+  periodStart DateTime @map("period_start") @db.Timestamptz(6)
+  periodEnd   DateTime @map("period_end") @db.Timestamptz(6)
 
-  createdAt DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
+  @@index([tenantId, createdAt(sort: Desc)])
   @@index([subscriptionId, createdAt])
   @@index([status, dueAt])
   @@map("subscription_invoice")
@@ -253,22 +261,22 @@ model SubscriptionInvoice {
 /// panel de plataforma sin tener que contar filas en tablas grandes.
 model TenantUsage {
   id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
-  tenantId String @db.Uuid @map("tenant_id")
+  tenantId String @map("tenant_id") @db.Uuid
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   day DateTime @db.Date
 
-  activeUsers      Int     @default(0) @map("active_users")
-  contactCount     Int     @default(0) @map("contact_count")
-  messagesIn       Int     @default(0) @map("messages_in")
-  messagesOut      Int     @default(0) @map("messages_out")
-  aiTokensIn       Int     @default(0) @map("ai_tokens_in")
-  aiTokensOut      Int     @default(0) @map("ai_tokens_out")
-  aiCostUsd        Decimal @default(0) @db.Decimal(10, 4) @map("ai_cost_usd")
-  workflowRuns     Int     @default(0) @map("workflow_runs")
-  documentsIssued  Int     @default(0) @map("documents_issued")
-  storageMb        Int     @default(0) @map("storage_mb")
-  apiCalls         Int     @default(0) @map("api_calls")
+  activeUsers     Int     @default(0) @map("active_users")
+  contactCount    Int     @default(0) @map("contact_count")
+  messagesIn      Int     @default(0) @map("messages_in")
+  messagesOut     Int     @default(0) @map("messages_out")
+  aiTokensIn      Int     @default(0) @map("ai_tokens_in")
+  aiTokensOut     Int     @default(0) @map("ai_tokens_out")
+  aiCostUsd       Decimal @default(0) @map("ai_cost_usd") @db.Decimal(10, 4)
+  workflowRuns    Int     @default(0) @map("workflow_runs")
+  documentsIssued Int     @default(0) @map("documents_issued")
+  storageMb       Int     @default(0) @map("storage_mb")
+  apiCalls        Int     @default(0) @map("api_calls")
 
   @@unique([tenantId, day])
   @@index([day])
@@ -279,21 +287,21 @@ model TenantUsage {
 /// superadmin no es un usuario con una bandera, es una entidad distinta con
 /// otro ciclo de vida, otro login y 2FA obligatorio.
 model PlatformAdmin {
-  id           String  @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
-  email        String  @unique @db.VarChar(255)
+  id           String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  email        String @unique @db.VarChar(255)
   passwordHash String @map("password_hash")
-  name         String  @db.VarChar(120)
+  name         String @db.VarChar(120)
 
-  totpSecret     String? @map("totp_secret") // cifrado AES-256-GCM en la capa de aplicación
-  totpEnabled    Boolean @default(false) @map("totp_enabled")
-  recoveryCodes  String[] @map("recovery_codes") // hashes, de un solo uso
+  totpSecret    String?  @map("totp_secret") // cifrado AES-256-GCM en la capa de aplicación
+  totpEnabled   Boolean  @default(false) @map("totp_enabled")
+  recoveryCodes String[] @map("recovery_codes") // hashes, de un solo uso
 
-  lastLoginAt DateTime? @db.Timestamptz(6) @map("last_login_at")
-  lastLoginIp String?   @db.Inet @map("last_login_ip")
-  disabledAt  DateTime? @db.Timestamptz(6) @map("disabled_at")
+  lastLoginAt DateTime? @map("last_login_at") @db.Timestamptz(6)
+  lastLoginIp String?   @map("last_login_ip") @db.Inet
+  disabledAt  DateTime? @map("disabled_at") @db.Timestamptz(6)
 
-  createdAt DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
-  updatedAt DateTime @updatedAt @db.Timestamptz(6) @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   @@map("platform_admin")
 }
@@ -315,25 +323,25 @@ model User {
   timezone     String? @db.VarChar(64)
 
   status          UserStatus @default(PENDING_VERIFICATION)
-  emailVerifiedAt DateTime?  @db.Timestamptz(6) @map("email_verified_at")
+  emailVerifiedAt DateTime?  @map("email_verified_at") @db.Timestamptz(6)
 
   totpEnabled   Boolean  @default(false) @map("totp_enabled")
   recoveryCodes String[] @map("recovery_codes") // hashes Argon2 de un solo uso
 
-  lastLoginAt DateTime? @db.Timestamptz(6) @map("last_login_at")
-  lastLoginIp String?   @db.Inet @map("last_login_ip")
+  lastLoginAt DateTime? @map("last_login_at") @db.Timestamptz(6)
+  lastLoginIp String?   @map("last_login_ip") @db.Inet
 
   /// Intentos fallidos consecutivos. El bloqueo real lo hace el limitador de
   /// tasa en Redis; esto es para mostrárselo al usuario y auditarlo.
   failedLoginAttempts Int       @default(0) @map("failed_login_attempts")
-  lockedUntil         DateTime? @db.Timestamptz(6) @map("locked_until")
+  lockedUntil         DateTime? @map("locked_until") @db.Timestamptz(6)
 
   /// Preferencias de interfaz: tema, densidad de tabla, columnas visibles.
   preferences Json @default("{}") @db.JsonB
 
-  createdAt DateTime  @default(now()) @db.Timestamptz(6) @map("created_at")
-  updatedAt DateTime  @updatedAt @db.Timestamptz(6) @map("updated_at")
-  deletedAt DateTime? @db.Timestamptz(6) @map("deleted_at")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
 
   memberships   Membership[]
   refreshTokens RefreshToken[]
@@ -368,26 +376,26 @@ enum UserStatus {
 /// Es la tabla que el guard de tenant consulta en CADA petición (cacheada).
 model Membership {
   id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
-  tenantId String @db.Uuid @map("tenant_id")
+  tenantId String @map("tenant_id") @db.Uuid
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  userId   String @db.Uuid @map("user_id")
+  userId   String @map("user_id") @db.Uuid
   user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  roleId String @db.Uuid @map("role_id")
+  roleId String @map("role_id") @db.Uuid
   role   Role   @relation(fields: [roleId], references: [id])
 
   status MembershipStatus @default(INVITED)
 
   /// Equipo al que pertenece. Determina el alcance "su equipo" del rol MANAGER.
-  teamName String? @db.VarChar(80) @map("team_name")
+  teamName String? @map("team_name") @db.VarChar(80)
 
-  invitedByUserId String?   @db.Uuid @map("invited_by_user_id")
-  invitedAt       DateTime  @default(now()) @db.Timestamptz(6) @map("invited_at")
-  acceptedAt      DateTime? @db.Timestamptz(6) @map("accepted_at")
-  disabledAt      DateTime? @db.Timestamptz(6) @map("disabled_at")
+  invitedByUserId String?   @map("invited_by_user_id") @db.Uuid
+  invitedAt       DateTime  @default(now()) @map("invited_at") @db.Timestamptz(6)
+  acceptedAt      DateTime? @map("accepted_at") @db.Timestamptz(6)
+  disabledAt      DateTime? @map("disabled_at") @db.Timestamptz(6)
 
-  createdAt DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
-  updatedAt DateTime @updatedAt @db.Timestamptz(6) @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   @@unique([tenantId, userId])
   @@index([tenantId, status])
@@ -405,7 +413,7 @@ enum MembershipStatus {
 /// (`isSystem = true`, no editables); los planes altos pueden crear más.
 model Role {
   id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
-  tenantId String @db.Uuid @map("tenant_id")
+  tenantId String @map("tenant_id") @db.Uuid
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   key         SystemRole
@@ -416,11 +424,13 @@ model Role {
   memberships Membership[]
   permissions RolePermission[]
 
-  createdAt DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
-  updatedAt DateTime @updatedAt @db.Timestamptz(6) @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   @@unique([tenantId, name])
-  @@index([tenantId])
+  /// Destino de la clave foránea compuesta de role_permission. `id` ya es
+  /// único por sí solo; este índice existe para garantizar la empresa.
+  @@unique([tenantId, id])
   @@map("role")
 }
 
@@ -437,15 +447,24 @@ enum SystemRole {
 /// ("contact:read", "deal:delete", "billing:manage") y `scope` responde a
 /// "¿sobre qué filas?" — la distinción entre un Manager y un Agente.
 model RolePermission {
-  id     String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
-  roleId String @db.Uuid @map("role_id")
-  role   Role   @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  /// Empresa del rol. Sin esta columna la tabla quedaba fuera de RLS: se
+  /// llegaba a la empresa sólo a través de `role`, y una consulta directa a
+  /// role_permission veía la configuración de permisos de todas las empresas.
+  tenantId String @map("tenant_id") @db.Uuid
+  roleId   String @map("role_id") @db.Uuid
+
+  /// Clave foránea COMPUESTA (tenant_id, role_id) → role(tenant_id, id).
+  /// No basta con que el rol exista: tiene que ser DE LA MISMA EMPRESA. Así es
+  /// imposible, a nivel de base de datos, colgar un permiso con el tenant_id
+  /// de una empresa de un rol de otra.
+  role Role @relation(fields: [tenantId, roleId], references: [tenantId, id], onDelete: Cascade)
 
   permission String          @db.VarChar(64)
   scope      PermissionScope @default(ALL)
 
   @@unique([roleId, permission])
-  @@index([roleId])
+  @@index([tenantId, roleId])
   @@map("role_permission")
 }
 
@@ -459,27 +478,27 @@ enum PermissionScope {
 /// si llega un token ya consumido, se revoca toda la familia.
 model RefreshToken {
   id     String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
-  userId String @db.Uuid @map("user_id")
+  userId String @map("user_id") @db.Uuid
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   /// SHA-256 del token. El valor en claro sólo existe en la cookie del cliente.
-  tokenHash String @unique @db.VarChar(64) @map("token_hash")
+  tokenHash String @unique @map("token_hash") @db.VarChar(64)
 
   /// Identificador de familia: todos los tokens nacidos de un mismo login.
-  familyId String @db.Uuid @map("family_id")
+  familyId String @map("family_id") @db.Uuid
 
   /// Empresa activa cuando se emitió. Cambiar de espacio emite un token nuevo.
-  tenantId String? @db.Uuid @map("tenant_id")
+  tenantId String? @map("tenant_id") @db.Uuid
 
   userAgent String? @map("user_agent")
   ip        String? @db.Inet
 
-  expiresAt DateTime  @db.Timestamptz(6) @map("expires_at")
-  usedAt    DateTime? @db.Timestamptz(6) @map("used_at")
-  revokedAt DateTime? @db.Timestamptz(6) @map("revoked_at")
-  revokedReason String? @db.VarChar(60) @map("revoked_reason") // "rotation" | "reuse_detected" | "logout" | "password_change"
+  expiresAt     DateTime  @map("expires_at") @db.Timestamptz(6)
+  usedAt        DateTime? @map("used_at") @db.Timestamptz(6)
+  revokedAt     DateTime? @map("revoked_at") @db.Timestamptz(6)
+  revokedReason String?   @map("revoked_reason") @db.VarChar(60) // "rotation" | "reuse_detected" | "logout" | "password_change"
 
-  createdAt DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   @@index([userId, revokedAt])
   @@index([familyId])
@@ -489,14 +508,14 @@ model RefreshToken {
 
 model TotpSecret {
   id     String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
-  userId String @unique @db.Uuid @map("user_id")
+  userId String @unique @map("user_id") @db.Uuid
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   /// Cifrado con AES-256-GCM. La clave maestra vive fuera de la base de datos.
-  secretEncrypted String @map("secret_encrypted")
-  confirmedAt     DateTime? @db.Timestamptz(6) @map("confirmed_at")
+  secretEncrypted String    @map("secret_encrypted")
+  confirmedAt     DateTime? @map("confirmed_at") @db.Timestamptz(6)
 
-  createdAt DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   @@map("totp_secret")
 }
@@ -505,19 +524,19 @@ model TotpSecret {
 /// e invitaciones. Una tabla en vez de tres porque el ciclo de vida es idéntico.
 model EmailToken {
   id     String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
-  userId String @db.Uuid @map("user_id")
+  userId String @map("user_id") @db.Uuid
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  tokenHash String         @unique @db.VarChar(64) @map("token_hash")
+  tokenHash String            @unique @map("token_hash") @db.VarChar(64)
   purpose   EmailTokenPurpose
 
   /// Contexto extra: para invitaciones, la empresa y el rol propuestos.
   payload Json? @db.JsonB
 
-  expiresAt DateTime  @db.Timestamptz(6) @map("expires_at")
-  usedAt    DateTime? @db.Timestamptz(6) @map("used_at")
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz(6)
+  usedAt    DateTime? @map("used_at") @db.Timestamptz(6)
 
-  createdAt DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   @@index([userId, purpose])
   @@index([expiresAt])
@@ -534,21 +553,21 @@ enum EmailTokenPurpose {
 /// Claves de la API pública, por empresa.
 model ApiKey {
   id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
-  tenantId String @db.Uuid @map("tenant_id")
+  tenantId String @map("tenant_id") @db.Uuid
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
-  name      String  @db.VarChar(80)
+  name    String   @db.VarChar(80)
   /// Prefijo visible para que el usuario identifique la clave sin revelarla.
-  prefix    String  @unique @db.VarChar(16)
-  keyHash   String  @unique @db.VarChar(64) @map("key_hash")
-  scopes    String[]
+  prefix  String   @unique @db.VarChar(16)
+  keyHash String   @unique @map("key_hash") @db.VarChar(64)
+  scopes  String[]
 
-  lastUsedAt DateTime? @db.Timestamptz(6) @map("last_used_at")
-  expiresAt  DateTime? @db.Timestamptz(6) @map("expires_at")
-  revokedAt  DateTime? @db.Timestamptz(6) @map("revoked_at")
+  lastUsedAt DateTime? @map("last_used_at") @db.Timestamptz(6)
+  expiresAt  DateTime? @map("expires_at") @db.Timestamptz(6)
+  revokedAt  DateTime? @map("revoked_at") @db.Timestamptz(6)
 
-  createdByUserId String? @db.Uuid @map("created_by_user_id")
-  createdAt       DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
+  createdByUserId String?  @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   @@index([tenantId, revokedAt])
   @@map("api_key")
@@ -558,17 +577,17 @@ model ApiKey {
 /// la petición del usuario. Particionado por mes en la migración.
 model AuditLog {
   id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
-  tenantId String @db.Uuid @map("tenant_id")
+  tenantId String @map("tenant_id") @db.Uuid
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
-  actorUserId  String?  @db.Uuid @map("actor_user_id")
-  actorEmail   String?  @db.VarChar(255) @map("actor_email")
-  actorType    ActorType @default(USER) @map("actor_type")
+  actorUserId String?   @map("actor_user_id") @db.Uuid
+  actorEmail  String?   @map("actor_email") @db.VarChar(255)
+  actorType   ActorType @default(USER) @map("actor_type")
 
-  action       AuditAction
-  resourceType String      @db.VarChar(60) @map("resource_type")
-  resourceId   String?     @db.Uuid @map("resource_id")
-  resourceLabel String?    @db.VarChar(200) @map("resource_label")
+  action        AuditAction
+  resourceType  String      @map("resource_type") @db.VarChar(60)
+  resourceId    String?     @map("resource_id") @db.Uuid
+  resourceLabel String?     @map("resource_label") @db.VarChar(200)
 
   /// Diferencia de valores { campo: { antes, despues } }. Campos sensibles
   /// redactados por el serializador antes de llegar aquí.
@@ -576,9 +595,9 @@ model AuditLog {
 
   ip        String? @db.Inet
   userAgent String? @map("user_agent")
-  traceId   String? @db.VarChar(40) @map("trace_id")
+  traceId   String? @map("trace_id") @db.VarChar(40)
 
-  createdAt DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   @@index([tenantId, createdAt(sort: Desc)])
   @@index([tenantId, resourceType, resourceId])
@@ -623,22 +642,22 @@ enum AuditAction {
 /// Nexo, Company es a quién le vende.
 model Company {
   id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
-  tenantId String @db.Uuid @map("tenant_id")
+  tenantId String @map("tenant_id") @db.Uuid
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
-  name     String  @db.VarChar(200)
-  legalName String? @db.VarChar(200) @map("legal_name")
-  taxId    String? @db.VarChar(40) @map("tax_id")
-  industry String? @db.VarChar(80)
-  size     String? @db.VarChar(40)
-  website  String?
-  phone    String? @db.VarChar(32)
-  email    String? @db.VarChar(255)
+  name      String  @db.VarChar(200)
+  legalName String? @map("legal_name") @db.VarChar(200)
+  taxId     String? @map("tax_id") @db.VarChar(40)
+  industry  String? @db.VarChar(80)
+  size      String? @db.VarChar(40)
+  website   String?
+  phone     String? @db.VarChar(32)
+  email     String? @db.VarChar(255)
 
   addressLine String? @map("address_line")
   city        String? @db.VarChar(120)
   state       String? @db.VarChar(120)
-  postalCode  String? @db.VarChar(20) @map("postal_code")
+  postalCode  String? @map("postal_code") @db.VarChar(20)
   country     String? @db.Char(2)
 
   custom Json @default("{}") @db.JsonB
@@ -647,9 +666,9 @@ model Company {
   deals     Deal[]
   documents Document[]
 
-  createdAt DateTime  @default(now()) @db.Timestamptz(6) @map("created_at")
-  updatedAt DateTime  @updatedAt @db.Timestamptz(6) @map("updated_at")
-  deletedAt DateTime? @db.Timestamptz(6) @map("deleted_at")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
 
   @@index([tenantId, deletedAt])
   @@index([tenantId, name])
@@ -659,39 +678,39 @@ model Company {
 /// La persona con la que se habla. Entidad central del CRM.
 model Contact {
   id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
-  tenantId String @db.Uuid @map("tenant_id")
+  tenantId String @map("tenant_id") @db.Uuid
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
-  firstName String  @db.VarChar(80) @map("first_name")
-  lastName  String? @db.VarChar(80) @map("last_name")
+  firstName String  @map("first_name") @db.VarChar(80)
+  lastName  String? @map("last_name") @db.VarChar(80)
   /// La calcula un trigger BEFORE a partir de firstName + lastName; el valor
   /// que mande la aplicación se ignora. Por eso lleva default: para que crear
   /// un contacto no obligue a componerlo en el cliente.
-  fullName  String  @default("") @db.VarChar(165) @map("full_name")
+  fullName  String  @default("") @map("full_name") @db.VarChar(165)
 
-  jobTitle String? @db.VarChar(120) @map("job_title")
+  jobTitle String? @map("job_title") @db.VarChar(120)
 
-  companyId String?  @db.Uuid @map("company_id")
-  company   Company? @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  companyId   String?  @map("company_id") @db.Uuid
+  company     Company? @relation(fields: [companyId], references: [id], onDelete: SetNull)
   /// Nombre de empresa libre, para contactos sin cuenta formal creada.
-  companyName String? @db.VarChar(200) @map("company_name")
+  companyName String?  @map("company_name") @db.VarChar(200)
 
-  email String? @db.VarChar(255)
+  email        String? @db.VarChar(255)
   /// SIEMPRE normalizado a E.164 (+593987654321). La deduplicación de la
   /// importación y el emparejamiento de WhatsApp dependen de esta invariante.
-  phoneE164   String? @db.VarChar(20) @map("phone_e164")
-  whatsappE164 String? @db.VarChar(20) @map("whatsapp_e164")
+  phoneE164    String? @map("phone_e164") @db.VarChar(20)
+  whatsappE164 String? @map("whatsapp_e164") @db.VarChar(20)
 
   addressLine String? @map("address_line")
   city        String? @db.VarChar(120)
   state       String? @db.VarChar(120)
-  postalCode  String? @db.VarChar(20) @map("postal_code")
+  postalCode  String? @map("postal_code") @db.VarChar(20)
   country     String? @db.Char(2)
 
   lifecycleStage LifecycleStage @default(LEAD) @map("lifecycle_stage")
   source         String?        @db.VarChar(80) // "whatsapp" | "import" | "web" | "manual" | "api"
 
-  ownerId String? @db.Uuid @map("owner_id")
+  ownerId String? @map("owner_id") @db.Uuid
   owner   User?   @relation("ContactOwner", fields: [ownerId], references: [id], onDelete: SetNull)
 
   /// Valores de los campos que la empresa definió en `CustomField`.
@@ -702,8 +721,8 @@ model Contact {
   /// Índice GIN + trigram sobre fullName y phoneE164.
   searchVector Unsupported("tsvector")? @map("search_vector")
 
-  lastActivityAt DateTime? @db.Timestamptz(6) @map("last_activity_at")
-  lastContactedAt DateTime? @db.Timestamptz(6) @map("last_contacted_at")
+  lastActivityAt  DateTime? @map("last_activity_at") @db.Timestamptz(6)
+  lastContactedAt DateTime? @map("last_contacted_at") @db.Timestamptz(6)
 
   tags          ContactTag[]
   deals         Deal[]
@@ -717,9 +736,9 @@ model Contact {
   enrollments   WorkflowEnrollment[]
   eventLinks    Event[]
 
-  createdAt DateTime  @default(now()) @db.Timestamptz(6) @map("created_at")
-  updatedAt DateTime  @updatedAt @db.Timestamptz(6) @map("updated_at")
-  deletedAt DateTime? @db.Timestamptz(6) @map("deleted_at")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
 
   @@index([tenantId, deletedAt, createdAt(sort: Desc)])
   @@index([tenantId, ownerId])
@@ -744,7 +763,7 @@ enum LifecycleStage {
 
 model Tag {
   id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
-  tenantId String @db.Uuid @map("tenant_id")
+  tenantId String @map("tenant_id") @db.Uuid
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   name  String @db.VarChar(60)
@@ -752,7 +771,7 @@ model Tag {
 
   contacts ContactTag[]
 
-  createdAt DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   @@unique([tenantId, name])
   @@index([tenantId])
@@ -760,13 +779,13 @@ model Tag {
 }
 
 model ContactTag {
-  contactId String  @db.Uuid @map("contact_id")
+  contactId String  @map("contact_id") @db.Uuid
   contact   Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
-  tagId     String  @db.Uuid @map("tag_id")
+  tagId     String  @map("tag_id") @db.Uuid
   tag       Tag     @relation(fields: [tagId], references: [id], onDelete: Cascade)
-  tenantId  String  @db.Uuid @map("tenant_id")
+  tenantId  String  @map("tenant_id") @db.Uuid
 
-  createdAt DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   @@id([contactId, tagId])
   @@index([tagId])
@@ -778,7 +797,7 @@ model ContactTag {
 /// Valida las escrituras y dibuja el formulario.
 model CustomField {
   id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
-  tenantId String @db.Uuid @map("tenant_id")
+  tenantId String @map("tenant_id") @db.Uuid
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   entity EntityType
@@ -795,9 +814,9 @@ model CustomField {
 
   values CustomFieldValue[]
 
-  createdAt DateTime  @default(now()) @db.Timestamptz(6) @map("created_at")
-  updatedAt DateTime  @updatedAt @db.Timestamptz(6) @map("updated_at")
-  archivedAt DateTime? @db.Timestamptz(6) @map("archived_at")
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  archivedAt DateTime? @map("archived_at") @db.Timestamptz(6)
 
   @@unique([tenantId, entity, key])
   @@index([tenantId, entity, sortOrder])
@@ -832,21 +851,21 @@ enum FieldType {
 /// campo concreto sin escanear el jsonb de toda la tabla.
 model CustomFieldValue {
   id       String      @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
-  tenantId String      @db.Uuid @map("tenant_id")
-  fieldId  String      @db.Uuid @map("field_id")
+  tenantId String      @map("tenant_id") @db.Uuid
+  fieldId  String      @map("field_id") @db.Uuid
   field    CustomField @relation(fields: [fieldId], references: [id], onDelete: Cascade)
 
-  contactId String?  @db.Uuid @map("contact_id")
+  contactId String?  @map("contact_id") @db.Uuid
   contact   Contact? @relation(fields: [contactId], references: [id], onDelete: Cascade)
-  dealId    String?  @db.Uuid @map("deal_id")
+  dealId    String?  @map("deal_id") @db.Uuid
   deal      Deal?    @relation(fields: [dealId], references: [id], onDelete: Cascade)
 
-  valueText   String? @map("value_text")
-  valueNumber Decimal?  @db.Decimal(18, 4) @map("value_number")
-  valueDate   DateTime? @db.Timestamptz(6) @map("value_date")
-  valueBool   Boolean? @map("value_bool")
+  valueText   String?   @map("value_text")
+  valueNumber Decimal?  @map("value_number") @db.Decimal(18, 4)
+  valueDate   DateTime? @map("value_date") @db.Timestamptz(6)
+  valueBool   Boolean?  @map("value_bool")
 
-  updatedAt DateTime @updatedAt @db.Timestamptz(6) @map("updated_at")
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   @@unique([fieldId, contactId])
   @@unique([fieldId, dealId])
@@ -857,17 +876,17 @@ model CustomFieldValue {
 
 model Note {
   id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
-  tenantId String @db.Uuid @map("tenant_id")
+  tenantId String @map("tenant_id") @db.Uuid
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   body String @db.Text
 
-  contactId String?  @db.Uuid @map("contact_id")
+  contactId String?  @map("contact_id") @db.Uuid
   contact   Contact? @relation(fields: [contactId], references: [id], onDelete: Cascade)
-  dealId    String?  @db.Uuid @map("deal_id")
+  dealId    String?  @map("deal_id") @db.Uuid
   deal      Deal?    @relation(fields: [dealId], references: [id], onDelete: Cascade)
 
-  authorId String? @db.Uuid @map("author_id")
+  authorId String? @map("author_id") @db.Uuid
   author   User?   @relation(fields: [authorId], references: [id], onDelete: SetNull)
 
   /// Menciones a usuarios, para notificarles.
@@ -875,9 +894,9 @@ model Note {
 
   pinned Boolean @default(false)
 
-  createdAt DateTime  @default(now()) @db.Timestamptz(6) @map("created_at")
-  updatedAt DateTime  @updatedAt @db.Timestamptz(6) @map("updated_at")
-  deletedAt DateTime? @db.Timestamptz(6) @map("deleted_at")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
 
   @@index([tenantId, contactId, createdAt(sort: Desc)])
   @@index([tenantId, dealId, createdAt(sort: Desc)])
@@ -889,22 +908,22 @@ model Note {
 /// contacto sin tocar este código.
 model Activity {
   id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
-  tenantId String @db.Uuid @map("tenant_id")
+  tenantId String @map("tenant_id") @db.Uuid
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   type ActivityType
 
   /// Referencia polimórfica al objeto que originó la actividad.
-  subjectType String  @db.VarChar(40) @map("subject_type")
-  subjectId   String? @db.Uuid @map("subject_id")
+  subjectType String  @map("subject_type") @db.VarChar(40)
+  subjectId   String? @map("subject_id") @db.Uuid
 
-  contactId String?  @db.Uuid @map("contact_id")
+  contactId String?  @map("contact_id") @db.Uuid
   contact   Contact? @relation(fields: [contactId], references: [id], onDelete: Cascade)
-  dealId    String?  @db.Uuid @map("deal_id")
+  dealId    String?  @map("deal_id") @db.Uuid
   deal      Deal?    @relation(fields: [dealId], references: [id], onDelete: Cascade)
 
-  actorId String? @db.Uuid @map("actor_id")
-  actor   User?   @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  actorId   String?   @map("actor_id") @db.Uuid
+  actor     User?     @relation(fields: [actorId], references: [id], onDelete: SetNull)
   actorType ActorType @default(USER) @map("actor_type")
 
   title   String  @db.VarChar(200)
@@ -912,7 +931,7 @@ model Activity {
   /// Carga útil específica del tipo: etapa anterior y nueva, importe, etc.
   payload Json?   @db.JsonB
 
-  occurredAt DateTime @default(now()) @db.Timestamptz(6) @map("occurred_at")
+  occurredAt DateTime @default(now()) @map("occurred_at") @db.Timestamptz(6)
 
   @@index([tenantId, contactId, occurredAt(sort: Desc)])
   @@index([tenantId, dealId, occurredAt(sort: Desc)])
@@ -942,7 +961,7 @@ enum ActivityType {
 
 model Pipeline {
   id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
-  tenantId String @db.Uuid @map("tenant_id")
+  tenantId String @map("tenant_id") @db.Uuid
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   name      String  @db.VarChar(80)
@@ -952,9 +971,9 @@ model Pipeline {
   stages PipelineStage[]
   deals  Deal[]
 
-  createdAt DateTime  @default(now()) @db.Timestamptz(6) @map("created_at")
-  updatedAt DateTime  @updatedAt @db.Timestamptz(6) @map("updated_at")
-  archivedAt DateTime? @db.Timestamptz(6) @map("archived_at")
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  archivedAt DateTime? @map("archived_at") @db.Timestamptz(6)
 
   @@unique([tenantId, name])
   @@index([tenantId, archivedAt])
@@ -965,8 +984,8 @@ model Pipeline {
 /// empresa, pero son editables: cada negocio tiene su propio embudo.
 model PipelineStage {
   id         String   @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
-  tenantId   String   @db.Uuid @map("tenant_id")
-  pipelineId String   @db.Uuid @map("pipeline_id")
+  tenantId   String   @map("tenant_id") @db.Uuid
+  pipelineId String   @map("pipeline_id") @db.Uuid
   pipeline   Pipeline @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
 
   name  String    @db.VarChar(60)
@@ -998,35 +1017,35 @@ enum StageType {
 
 model Deal {
   id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
-  tenantId String @db.Uuid @map("tenant_id")
+  tenantId String @map("tenant_id") @db.Uuid
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   title String @db.VarChar(200)
 
-  pipelineId String   @db.Uuid @map("pipeline_id")
-  pipeline   Pipeline @relation(fields: [pipelineId], references: [id], onDelete: Restrict)
-  stageId    String   @db.Uuid @map("stage_id")
+  pipelineId String        @map("pipeline_id") @db.Uuid
+  pipeline   Pipeline      @relation(fields: [pipelineId], references: [id], onDelete: Restrict)
+  stageId    String        @map("stage_id") @db.Uuid
   stage      PipelineStage @relation(fields: [stageId], references: [id], onDelete: Restrict)
 
-  contactId String?  @db.Uuid @map("contact_id")
+  contactId String?  @map("contact_id") @db.Uuid
   contact   Contact? @relation(fields: [contactId], references: [id], onDelete: SetNull)
-  companyId String?  @db.Uuid @map("company_id")
+  companyId String?  @map("company_id") @db.Uuid
   company   Company? @relation(fields: [companyId], references: [id], onDelete: SetNull)
 
-  ownerId String? @db.Uuid @map("owner_id")
+  ownerId String? @map("owner_id") @db.Uuid
   owner   User?   @relation("DealOwner", fields: [ownerId], references: [id], onDelete: SetNull)
 
   value       Decimal @default(0) @db.Decimal(14, 2)
   currency    String  @default("USD") @db.Char(3)
   probability Int     @default(0)
 
-  status         DealStatus @default(OPEN)
-  expectedCloseAt DateTime? @db.Date @map("expected_close_at")
-  closedAt        DateTime? @db.Timestamptz(6) @map("closed_at")
+  status          DealStatus @default(OPEN)
+  expectedCloseAt DateTime?  @map("expected_close_at") @db.Date
+  closedAt        DateTime?  @map("closed_at") @db.Timestamptz(6)
 
-  lostReasonId   String?     @db.Uuid @map("lost_reason_id")
+  lostReasonId   String?     @map("lost_reason_id") @db.Uuid
   lostReason     LostReason? @relation(fields: [lostReasonId], references: [id], onDelete: SetNull)
-  lostReasonNote String? @map("lost_reason_note")
+  lostReasonNote String?     @map("lost_reason_note")
 
   /// Orden fraccional dentro de la columna del Kanban. Mover una tarjeta
   /// escribe UNA fila: se toma el punto medio entre sus dos vecinas y sólo se
@@ -1037,10 +1056,10 @@ model Deal {
   custom Json    @default("{}") @db.JsonB
 
   /// Desnormalizado desde `deal_item` para poder ordenar y sumar sin join.
-  itemsTotal Decimal @default(0) @db.Decimal(14, 2) @map("items_total")
+  itemsTotal Decimal @default(0) @map("items_total") @db.Decimal(14, 2)
 
-  stageEnteredAt DateTime @default(now()) @db.Timestamptz(6) @map("stage_entered_at")
-  lastActivityAt DateTime? @db.Timestamptz(6) @map("last_activity_at")
+  stageEnteredAt DateTime  @default(now()) @map("stage_entered_at") @db.Timestamptz(6)
+  lastActivityAt DateTime? @map("last_activity_at") @db.Timestamptz(6)
 
   items        DealItem[]
   stageHistory DealStageHistory[]
@@ -1051,9 +1070,9 @@ model Deal {
   fieldValues  CustomFieldValue[]
   events       Event[]
 
-  createdAt DateTime  @default(now()) @db.Timestamptz(6) @map("created_at")
-  updatedAt DateTime  @updatedAt @db.Timestamptz(6) @map("updated_at")
-  deletedAt DateTime? @db.Timestamptz(6) @map("deleted_at")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
 
   @@index([tenantId, pipelineId, stageId, position])
   @@index([tenantId, ownerId, status])
@@ -1074,22 +1093,22 @@ enum DealStatus {
 /// jamás — no se puede reconstruir a posteriori.
 model DealStageHistory {
   id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
-  tenantId String @db.Uuid @map("tenant_id")
-  dealId   String @db.Uuid @map("deal_id")
+  tenantId String @map("tenant_id") @db.Uuid
+  dealId   String @map("deal_id") @db.Uuid
   deal     Deal   @relation(fields: [dealId], references: [id], onDelete: Cascade)
 
-  stageId     String        @db.Uuid @map("stage_id")
+  stageId     String        @map("stage_id") @db.Uuid
   stage       PipelineStage @relation(fields: [stageId], references: [id], onDelete: Cascade)
-  fromStageId String?       @db.Uuid @map("from_stage_id")
+  fromStageId String?       @map("from_stage_id") @db.Uuid
 
-  movedByUserId String? @db.Uuid @map("moved_by_user_id")
+  movedByUserId String?   @map("moved_by_user_id") @db.Uuid
   movedByType   ActorType @default(USER) @map("moved_by_type")
 
-  enteredAt DateTime  @default(now()) @db.Timestamptz(6) @map("entered_at")
-  exitedAt  DateTime? @db.Timestamptz(6) @map("exited_at")
+  enteredAt       DateTime  @default(now()) @map("entered_at") @db.Timestamptz(6)
+  exitedAt        DateTime? @map("exited_at") @db.Timestamptz(6)
   /// Calculado al salir. Redundante con las fechas, pero evita aritmética de
   /// intervalos en cada consulta del panel comercial.
-  durationSeconds Int? @map("duration_seconds")
+  durationSeconds Int?      @map("duration_seconds")
 
   @@index([tenantId, dealId, enteredAt])
   @@index([tenantId, stageId, enteredAt])
@@ -1098,18 +1117,18 @@ model DealStageHistory {
 
 model Product {
   id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
-  tenantId String @db.Uuid @map("tenant_id")
+  tenantId String @map("tenant_id") @db.Uuid
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   sku         String? @db.VarChar(60)
   name        String  @db.VarChar(200)
   description String?
 
-  unitPrice Decimal @default(0) @db.Decimal(14, 2) @map("unit_price")
+  unitPrice Decimal @default(0) @map("unit_price") @db.Decimal(14, 2)
   currency  String  @default("USD") @db.Char(3)
   unit      String  @default("unidad") @db.VarChar(30)
 
-  taxRateId String?  @db.Uuid @map("tax_rate_id")
+  taxRateId String?  @map("tax_rate_id") @db.Uuid
   taxRate   TaxRate? @relation(fields: [taxRateId], references: [id], onDelete: SetNull)
 
   active Boolean @default(true)
@@ -1117,8 +1136,8 @@ model Product {
   dealItems     DealItem[]
   documentItems DocumentItem[]
 
-  createdAt DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
-  updatedAt DateTime @updatedAt @db.Timestamptz(6) @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   @@unique([tenantId, sku])
   @@index([tenantId, active, name])
@@ -1127,18 +1146,18 @@ model Product {
 
 model DealItem {
   id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
-  tenantId String @db.Uuid @map("tenant_id")
-  dealId   String @db.Uuid @map("deal_id")
+  tenantId String @map("tenant_id") @db.Uuid
+  dealId   String @map("deal_id") @db.Uuid
   deal     Deal   @relation(fields: [dealId], references: [id], onDelete: Cascade)
 
-  productId String?  @db.Uuid @map("product_id")
+  productId String?  @map("product_id") @db.Uuid
   product   Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
 
   /// Copia del nombre y precio en el momento de añadirlo: si el producto
   /// cambia de precio mañana, el trato de ayer no se reescribe solo.
   name      String  @db.VarChar(200)
   quantity  Decimal @default(1) @db.Decimal(12, 3)
-  unitPrice Decimal @db.Decimal(14, 2) @map("unit_price")
+  unitPrice Decimal @map("unit_price") @db.Decimal(14, 2)
   discount  Decimal @default(0) @db.Decimal(5, 2) // porcentaje
   total     Decimal @db.Decimal(14, 2)
 
@@ -1150,7 +1169,7 @@ model DealItem {
 
 model LostReason {
   id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
-  tenantId String @db.Uuid @map("tenant_id")
+  tenantId String @map("tenant_id") @db.Uuid
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   name      String  @db.VarChar(120)
@@ -1172,7 +1191,7 @@ model LostReason {
 
 model Channel {
   id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
-  tenantId String @db.Uuid @map("tenant_id")
+  tenantId String @map("tenant_id") @db.Uuid
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   type   ChannelType
@@ -1182,28 +1201,28 @@ model Channel {
   /// Identificador del canal en el proveedor. Para WhatsApp Cloud es el
   /// phone_number_id de Meta: es lo que permite resolver a qué empresa
   /// pertenece un webhook entrante.
-  externalId String? @db.VarChar(120) @map("external_id")
+  externalId String? @map("external_id") @db.VarChar(120)
   /// Número en E.164, para mostrar.
-  displayId  String? @db.VarChar(40) @map("display_id")
+  displayId  String? @map("display_id") @db.VarChar(40)
 
   /// Credenciales cifradas con AES-256-GCM. NUNCA vuelven al cliente, ni
   /// enmascaradas desde la BD: la interfaz muestra sólo los últimos 4.
-  credentialsEncrypted String? @map("credentials_encrypted")
+  credentialsEncrypted   String? @map("credentials_encrypted")
   /// Secreto de verificación del webhook, también cifrado.
   webhookSecretEncrypted String? @map("webhook_secret_encrypted")
 
   config Json @default("{}") @db.JsonB
 
-  lastErrorAt      DateTime? @db.Timestamptz(6) @map("last_error_at")
-  lastErrorMessage String? @map("last_error_message")
-  connectedAt      DateTime? @db.Timestamptz(6) @map("connected_at")
+  lastErrorAt      DateTime? @map("last_error_at") @db.Timestamptz(6)
+  lastErrorMessage String?   @map("last_error_message")
+  connectedAt      DateTime? @map("connected_at") @db.Timestamptz(6)
 
   conversations Conversation[]
   templates     WaTemplate[]
   messages      Message[]
 
-  createdAt DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
-  updatedAt DateTime @updatedAt @db.Timestamptz(6) @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   @@unique([type, externalId], map: "channel_provider_identity_key")
   @@index([tenantId, type, status])
@@ -1231,18 +1250,18 @@ enum ChannelStatus {
 /// mensaje entrante encuentre a su persona.
 model ContactIdentity {
   id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
-  tenantId String @db.Uuid @map("tenant_id")
+  tenantId String @map("tenant_id") @db.Uuid
 
-  contactId String  @db.Uuid @map("contact_id")
+  contactId String  @map("contact_id") @db.Uuid
   contact   Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
 
-  type ChannelType
+  type  ChannelType
   /// Para WhatsApp: el wa_id que devuelve Meta, en E.164 sin el '+'.
-  value String @db.VarChar(120)
+  value String      @db.VarChar(120)
 
   verified Boolean @default(false)
 
-  createdAt DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   @@unique([tenantId, type, value])
   @@index([tenantId, contactId])
@@ -1251,42 +1270,42 @@ model ContactIdentity {
 
 model Conversation {
   id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
-  tenantId String @db.Uuid @map("tenant_id")
+  tenantId String @map("tenant_id") @db.Uuid
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
-  channelId String  @db.Uuid @map("channel_id")
+  channelId String  @map("channel_id") @db.Uuid
   channel   Channel @relation(fields: [channelId], references: [id], onDelete: Cascade)
 
-  contactId String  @db.Uuid @map("contact_id")
+  contactId String  @map("contact_id") @db.Uuid
   contact   Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
 
   status ConversationStatus @default(OPEN)
 
-  assigneeId String? @db.Uuid @map("assignee_id")
+  assigneeId String? @map("assignee_id") @db.Uuid
   assignee   User?   @relation("ConversationAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
 
   /// La ventana de 24 h de Meta. Fuera de ella sólo se pueden enviar
   /// plantillas aprobadas. La interfaz lee esto para bloquear el envío libre
   /// ANTES de que el agente escriba, no después del rechazo de la API.
-  windowExpiresAt DateTime? @db.Timestamptz(6) @map("window_expires_at")
+  windowExpiresAt DateTime? @map("window_expires_at") @db.Timestamptz(6)
 
   /// Desnormalizados para pintar la lista de la bandeja sin un join por fila.
-  lastMessageAt      DateTime? @db.Timestamptz(6) @map("last_message_at")
-  lastMessagePreview String?   @db.VarChar(200) @map("last_message_preview")
+  lastMessageAt        DateTime?         @map("last_message_at") @db.Timestamptz(6)
+  lastMessagePreview   String?           @map("last_message_preview") @db.VarChar(200)
   lastMessageDirection MessageDirection? @map("last_message_direction")
-  unreadCount        Int       @default(0) @map("unread_count")
+  unreadCount          Int               @default(0) @map("unread_count")
 
   /// Silenciar la respuesta automática de IA en esta conversación concreta.
   aiEnabled Boolean @default(true) @map("ai_enabled")
 
-  snoozedUntil DateTime? @db.Timestamptz(6) @map("snoozed_until")
-  resolvedAt   DateTime? @db.Timestamptz(6) @map("resolved_at")
+  snoozedUntil DateTime? @map("snoozed_until") @db.Timestamptz(6)
+  resolvedAt   DateTime? @map("resolved_at") @db.Timestamptz(6)
 
   messages  Message[]
   aiThreads AiThread[]
 
-  createdAt DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
-  updatedAt DateTime @updatedAt @db.Timestamptz(6) @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   @@unique([channelId, contactId])
   @@index([tenantId, status, lastMessageAt(sort: Desc)])
@@ -1306,12 +1325,12 @@ enum ConversationStatus {
 /// `createdAt` en la migración.
 model Message {
   id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
-  tenantId String @db.Uuid @map("tenant_id")
+  tenantId String @map("tenant_id") @db.Uuid
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
-  conversationId String       @db.Uuid @map("conversation_id")
+  conversationId String       @map("conversation_id") @db.Uuid
   conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  channelId      String       @db.Uuid @map("channel_id")
+  channelId      String       @map("channel_id") @db.Uuid
   channel        Channel      @relation(fields: [channelId], references: [id], onDelete: Cascade)
 
   direction MessageDirection
@@ -1321,34 +1340,34 @@ model Message {
 
   /// Id del mensaje en el proveedor (wamid de Meta). Único por canal: es la
   /// defensa contra los reintentos de webhook, que SÍ ocurren.
-  externalId String? @db.VarChar(160) @map("external_id")
+  externalId String? @map("external_id") @db.VarChar(160)
 
-  status MessageDeliveryStatus @default(QUEUED)
-  statusUpdatedAt DateTime?    @db.Timestamptz(6) @map("status_updated_at")
-  errorCode    String?         @db.VarChar(40) @map("error_code")
-  errorMessage String? @map("error_message")
+  status          MessageDeliveryStatus @default(QUEUED)
+  statusUpdatedAt DateTime?             @map("status_updated_at") @db.Timestamptz(6)
+  errorCode       String?               @map("error_code") @db.VarChar(40)
+  errorMessage    String?               @map("error_message")
 
   /// Quién lo envió: un agente, la IA, una automatización o el contacto.
-  senderUserId String?   @db.Uuid @map("sender_user_id")
+  senderUserId String?   @map("sender_user_id") @db.Uuid
   senderType   ActorType @default(USER) @map("sender_type")
 
   /// Nota interna: visible para el equipo, nunca enviada al contacto.
   isInternal Boolean @default(false) @map("is_internal")
 
-  templateId String?     @db.Uuid @map("template_id")
-  template   WaTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  templateId     String?     @map("template_id") @db.Uuid
+  template       WaTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
   /// Variables con las que se rellenó la plantilla.
-  templateParams Json? @db.JsonB @map("template_params")
+  templateParams Json?       @map("template_params") @db.JsonB
 
   /// Mensaje al que responde, si es una respuesta citada.
-  replyToExternalId String? @db.VarChar(160) @map("reply_to_external_id")
+  replyToExternalId String? @map("reply_to_external_id") @db.VarChar(160)
 
   /// Carga cruda del proveedor, para depurar sin pedirle capturas al cliente.
-  rawPayload Json? @db.JsonB @map("raw_payload")
+  rawPayload Json? @map("raw_payload") @db.JsonB
 
   media MessageMedia[]
 
-  createdAt DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   @@unique([channelId, externalId], map: "message_channel_external_key")
   @@index([tenantId, conversationId, createdAt(sort: Desc)])
@@ -1386,29 +1405,29 @@ enum MessageDeliveryStatus {
 }
 
 model MessageMedia {
-  id       String  @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
-  tenantId String  @db.Uuid @map("tenant_id")
-  messageId String @db.Uuid @map("message_id")
-  message  Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  id        String  @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  tenantId  String  @map("tenant_id") @db.Uuid
+  messageId String  @map("message_id") @db.Uuid
+  message   Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
 
-  fileId String? @db.Uuid @map("file_id")
+  fileId String? @map("file_id") @db.Uuid
   file   File?   @relation(fields: [fileId], references: [id], onDelete: SetNull)
 
   /// Id del medio en Meta. Su URL de descarga caduca en minutos: por eso un
   /// trabajo aparte lo baja y lo sube a nuestro almacenamiento.
-  externalMediaId String? @db.VarChar(160) @map("external_media_id")
+  externalMediaId String? @map("external_media_id") @db.VarChar(160)
 
-  mimeType String? @db.VarChar(120) @map("mime_type")
-  filename String? @db.VarChar(255)
-  sizeBytes Int? @map("size_bytes")
-  caption  String?
+  mimeType        String? @map("mime_type") @db.VarChar(120)
+  filename        String? @db.VarChar(255)
+  sizeBytes       Int?    @map("size_bytes")
+  caption         String?
   /// Duración en segundos, para audio y vídeo.
-  durationSeconds Int? @map("duration_seconds")
+  durationSeconds Int?    @map("duration_seconds")
 
-  downloadedAt DateTime? @db.Timestamptz(6) @map("downloaded_at")
-  downloadError String? @map("download_error")
+  downloadedAt  DateTime? @map("downloaded_at") @db.Timestamptz(6)
+  downloadError String?   @map("download_error")
 
-  createdAt DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   @@index([tenantId, messageId])
   @@map("message_media")
@@ -1417,29 +1436,29 @@ model MessageMedia {
 /// Plantillas de WhatsApp. Meta las aprueba; nosotros reflejamos su estado.
 model WaTemplate {
   id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
-  tenantId String @db.Uuid @map("tenant_id")
+  tenantId String @map("tenant_id") @db.Uuid
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
-  channelId String  @db.Uuid @map("channel_id")
+  channelId String  @map("channel_id") @db.Uuid
   channel   Channel @relation(fields: [channelId], references: [id], onDelete: Cascade)
 
   name     String @db.VarChar(120)
   language String @default("es") @db.VarChar(10)
   category String @default("UTILITY") @db.VarChar(30) // MARKETING | UTILITY | AUTHENTICATION
 
-  status TemplateStatus @default(DRAFT)
-  externalId String?    @db.VarChar(120) @map("external_id")
-  rejectedReason String? @map("rejected_reason")
+  status         TemplateStatus @default(DRAFT)
+  externalId     String?        @map("external_id") @db.VarChar(120)
+  rejectedReason String?        @map("rejected_reason")
 
   /// Componentes tal como los define la Graph API: header, body, footer, buttons.
-  components Json @db.JsonB
+  components Json     @db.JsonB
   /// Nombres de las variables detectadas en el cuerpo, en orden: {{1}}, {{2}}…
   variables  String[]
 
   messages Message[]
 
-  createdAt DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
-  updatedAt DateTime @updatedAt @db.Timestamptz(6) @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   @@unique([channelId, name, language])
   @@index([tenantId, status])
@@ -1461,23 +1480,23 @@ enum TemplateStatus {
 model WebhookEvent {
   id String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
 
-  provider String @db.VarChar(40) // "meta" | "stripe" | ...
-  eventId  String @db.VarChar(200) @map("event_id")
-  eventType String? @db.VarChar(80) @map("event_type")
+  provider  String  @db.VarChar(40) // "meta" | "stripe" | ...
+  eventId   String  @map("event_id") @db.VarChar(200)
+  eventType String? @map("event_type") @db.VarChar(80)
 
   /// Puede ser nulo: se resuelve al procesar, no al recibir.
-  tenantId  String? @db.Uuid @map("tenant_id")
-  channelId String? @db.Uuid @map("channel_id")
+  tenantId  String? @map("tenant_id") @db.Uuid
+  channelId String? @map("channel_id") @db.Uuid
 
   payload   Json    @db.JsonB
   signature String?
 
-  status       WebhookStatus @default(PENDING)
-  attempts     Int           @default(0)
-  lastError    String? @map("last_error")
-  processedAt  DateTime?     @db.Timestamptz(6) @map("processed_at")
+  status      WebhookStatus @default(PENDING)
+  attempts    Int           @default(0)
+  lastError   String?       @map("last_error")
+  processedAt DateTime?     @map("processed_at") @db.Timestamptz(6)
 
-  receivedAt DateTime @default(now()) @db.Timestamptz(6) @map("received_at")
+  receivedAt DateTime @default(now()) @map("received_at") @db.Timestamptz(6)
 
   @@unique([provider, eventId])
   @@index([status, receivedAt])
@@ -1499,34 +1518,34 @@ enum WebhookStatus {
 
 model AiSource {
   id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
-  tenantId String @db.Uuid @map("tenant_id")
+  tenantId String @map("tenant_id") @db.Uuid
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   type   AiSourceType
-  title  String       @db.VarChar(255)
+  title  String         @db.VarChar(255)
   status AiSourceStatus @default(UPLOADED)
 
-  fileId String? @db.Uuid @map("file_id")
+  fileId String? @map("file_id") @db.Uuid
   file   File?   @relation(fields: [fileId], references: [id], onDelete: SetNull)
   url    String?
 
   /// Texto extraído completo. Se conserva para poder reindexar con otro
   /// tamaño de trozo sin volver a parsear el PDF.
-  extractedText String? @db.Text @map("extracted_text")
+  extractedText String? @map("extracted_text") @db.Text
 
   chunkCount Int @default(0) @map("chunk_count")
   tokenCount Int @default(0) @map("token_count")
 
-  errorMessage String? @map("error_message")
-  indexedAt    DateTime? @db.Timestamptz(6) @map("indexed_at")
+  errorMessage String?   @map("error_message")
+  indexedAt    DateTime? @map("indexed_at") @db.Timestamptz(6)
 
-  uploadedByUserId String? @db.Uuid @map("uploaded_by_user_id")
+  uploadedByUserId String? @map("uploaded_by_user_id") @db.Uuid
 
   chunks AiChunk[]
 
-  createdAt DateTime  @default(now()) @db.Timestamptz(6) @map("created_at")
-  updatedAt DateTime  @updatedAt @db.Timestamptz(6) @map("updated_at")
-  deletedAt DateTime? @db.Timestamptz(6) @map("deleted_at")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
 
   @@index([tenantId, status])
   @@index([tenantId, deletedAt, createdAt(sort: Desc)])
@@ -1554,13 +1573,13 @@ enum AiSourceStatus {
 /// motivo de tener los embeddings en Postgres y no en una base aparte.
 model AiChunk {
   id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
-  tenantId String @db.Uuid @map("tenant_id")
+  tenantId String @map("tenant_id") @db.Uuid
 
-  sourceId String   @db.Uuid @map("source_id")
+  sourceId String   @map("source_id") @db.Uuid
   source   AiSource @relation(fields: [sourceId], references: [id], onDelete: Cascade)
 
   /// Posición dentro del documento, para citar "página 4" y ordenar el contexto.
-  chunkIndex Int @map("chunk_index")
+  chunkIndex Int    @map("chunk_index")
   content    String @db.Text
   tokens     Int    @default(0)
 
@@ -1570,7 +1589,7 @@ model AiChunk {
   /// text-embedding-3-small → 1536 dimensiones. Índice HNSW en la migración.
   embedding Unsupported("vector(1536)")?
 
-  createdAt DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   @@unique([sourceId, chunkIndex])
   @@index([tenantId, sourceId])
@@ -1579,25 +1598,25 @@ model AiChunk {
 
 model AiThread {
   id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
-  tenantId String @db.Uuid @map("tenant_id")
+  tenantId String @map("tenant_id") @db.Uuid
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   title String? @db.VarChar(200)
 
   /// Un hilo puede nacer del asistente general o estar anclado a una
   /// conversación de WhatsApp (resumen, respuesta sugerida).
-  conversationId String?       @db.Uuid @map("conversation_id")
+  conversationId String?       @map("conversation_id") @db.Uuid
   conversation   Conversation? @relation(fields: [conversationId], references: [id], onDelete: Cascade)
 
-  userId String? @db.Uuid @map("user_id")
+  userId String? @map("user_id") @db.Uuid
   user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   purpose AiPurpose @default(CHAT)
 
   messages AiMessage[]
 
-  createdAt DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
-  updatedAt DateTime @updatedAt @db.Timestamptz(6) @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   @@index([tenantId, userId, updatedAt(sort: Desc)])
   @@index([tenantId, conversationId])
@@ -1616,8 +1635,8 @@ enum AiPurpose {
 
 model AiMessage {
   id       String   @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
-  tenantId String   @db.Uuid @map("tenant_id")
-  threadId String   @db.Uuid @map("thread_id")
+  tenantId String   @map("tenant_id") @db.Uuid
+  threadId String   @map("thread_id") @db.Uuid
   thread   AiThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
 
   role    AiRole
@@ -1627,13 +1646,13 @@ model AiMessage {
   /// documento X, página 4" y lo que hace auditable la respuesta.
   citations Json? @db.JsonB
 
-  model       String? @db.VarChar(60)
-  tokensIn    Int     @default(0) @map("tokens_in")
-  tokensOut   Int     @default(0) @map("tokens_out")
-  latencyMs   Int? @map("latency_ms")
-  finishReason String? @db.VarChar(30) @map("finish_reason")
+  model        String? @db.VarChar(60)
+  tokensIn     Int     @default(0) @map("tokens_in")
+  tokensOut    Int     @default(0) @map("tokens_out")
+  latencyMs    Int?    @map("latency_ms")
+  finishReason String? @map("finish_reason") @db.VarChar(30)
 
-  createdAt DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   @@index([tenantId, threadId, createdAt])
   @@map("ai_message")
@@ -1650,7 +1669,7 @@ enum AiRole {
 /// sin esta tabla no hay forma de poner un techo ni de repercutir el coste.
 model AiUsage {
   id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
-  tenantId String @db.Uuid @map("tenant_id")
+  tenantId String @map("tenant_id") @db.Uuid
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   purpose AiPurpose
@@ -1658,11 +1677,11 @@ model AiUsage {
 
   tokensIn  Int     @default(0) @map("tokens_in")
   tokensOut Int     @default(0) @map("tokens_out")
-  costUsd   Decimal @default(0) @db.Decimal(10, 6) @map("cost_usd")
+  costUsd   Decimal @default(0) @map("cost_usd") @db.Decimal(10, 6)
 
-  userId String? @db.Uuid @map("user_id")
+  userId String? @map("user_id") @db.Uuid
 
-  createdAt DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   @@index([tenantId, createdAt(sort: Desc)])
   @@index([tenantId, purpose, createdAt])
@@ -1671,7 +1690,7 @@ model AiUsage {
 
 model AiSetting {
   id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
-  tenantId String @unique @db.Uuid @map("tenant_id")
+  tenantId String @unique @map("tenant_id") @db.Uuid
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   enabled Boolean @default(false)
@@ -1679,31 +1698,31 @@ model AiSetting {
   /// Instrucciones de la empresa: tono, nombre del asistente, qué no decir.
   /// Se inyectan en el prompt de sistema por encima de las reglas base, que
   /// no son sobrescribibles por el cliente.
-  systemPrompt String? @db.Text @map("system_prompt")
-  assistantName String @default("Asistente") @db.VarChar(60) @map("assistant_name")
-  tone         String  @default("profesional") @db.VarChar(40)
+  systemPrompt  String? @map("system_prompt") @db.Text
+  assistantName String  @default("Asistente") @map("assistant_name") @db.VarChar(60)
+  tone          String  @default("profesional") @db.VarChar(40)
 
   /// Responder solo, o sugerir y que el agente decida.
-  autoReply         Boolean @default(false) @map("auto_reply")
+  autoReply             Boolean @default(false) @map("auto_reply")
   /// No responder sola si hay un humano asignado a la conversación.
   autoReplySkipAssigned Boolean @default(true) @map("auto_reply_skip_assigned")
   /// Horario fuera del cual sí responde sola (JSON con franjas por día).
-  autoReplySchedule Json? @db.JsonB @map("auto_reply_schedule")
+  autoReplySchedule     Json?   @map("auto_reply_schedule") @db.JsonB
 
-  chatModel      String @default("gpt-4o-mini") @db.VarChar(60) @map("chat_model")
-  embeddingModel String @default("text-embedding-3-small") @db.VarChar(60) @map("embedding_model")
-  temperature    Decimal @default(0.3) @db.Decimal(3, 2)
-  maxContextChunks Int   @default(6) @map("max_context_chunks")
+  chatModel        String  @default("gpt-4o-mini") @map("chat_model") @db.VarChar(60)
+  embeddingModel   String  @default("text-embedding-3-small") @map("embedding_model") @db.VarChar(60)
+  temperature      Decimal @default(0.3) @db.Decimal(3, 2)
+  maxContextChunks Int     @default(6) @map("max_context_chunks")
 
   /// Techo mensual en dólares. Al alcanzarlo se corta, no se factura de más.
-  monthlyBudgetUsd Decimal @default(0) @db.Decimal(10, 2) @map("monthly_budget_usd")
+  monthlyBudgetUsd Decimal @default(0) @map("monthly_budget_usd") @db.Decimal(10, 2)
 
   /// Si la recuperación no alcanza este umbral de similitud, la IA no
   /// responde: deriva a un humano. Es la defensa contra la invención.
-  minSimilarity Decimal @default(0.25) @db.Decimal(4, 3) @map("min_similarity")
+  minSimilarity Decimal @default(0.25) @map("min_similarity") @db.Decimal(4, 3)
 
-  createdAt DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
-  updatedAt DateTime @updatedAt @db.Timestamptz(6) @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   @@map("ai_setting")
 }
@@ -1714,7 +1733,7 @@ model AiSetting {
 
 model Workflow {
   id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
-  tenantId String @db.Uuid @map("tenant_id")
+  tenantId String @map("tenant_id") @db.Uuid
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   name        String         @db.VarChar(120)
@@ -1723,28 +1742,28 @@ model Workflow {
 
   /// Evento del bus que lo despierta: "contact.created", "deal.stage_changed",
   /// "whatsapp.message.received", "schedule.cron"…
-  triggerType  String @db.VarChar(60) @map("trigger_type")
+  triggerType   String @map("trigger_type") @db.VarChar(60)
   /// Filtro del disparador: qué etapa, qué etiqueta, qué cron.
-  triggerConfig Json  @default("{}") @db.JsonB @map("trigger_config")
+  triggerConfig Json   @default("{}") @map("trigger_config") @db.JsonB
 
   /// Versión publicada actualmente en ejecución.
-  activeVersionId String? @unique @db.Uuid @map("active_version_id")
+  activeVersionId String? @unique @map("active_version_id") @db.Uuid
 
   /// Impide reinscribir al mismo contacto mientras ya está dentro del flujo.
   allowReenrollment Boolean @default(false) @map("allow_reenrollment")
 
-  totalRuns   Int @default(0) @map("total_runs")
-  failedRuns  Int @default(0) @map("failed_runs")
+  totalRuns  Int @default(0) @map("total_runs")
+  failedRuns Int @default(0) @map("failed_runs")
 
-  createdByUserId String? @db.Uuid @map("created_by_user_id")
+  createdByUserId String? @map("created_by_user_id") @db.Uuid
 
   versions    WorkflowVersion[]
   runs        WorkflowRun[]
   enrollments WorkflowEnrollment[]
 
-  createdAt DateTime  @default(now()) @db.Timestamptz(6) @map("created_at")
-  updatedAt DateTime  @updatedAt @db.Timestamptz(6) @map("updated_at")
-  archivedAt DateTime? @db.Timestamptz(6) @map("archived_at")
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  archivedAt DateTime? @map("archived_at") @db.Timestamptz(6)
 
   @@index([tenantId, status])
   @@index([tenantId, triggerType, status])
@@ -1762,8 +1781,8 @@ enum WorkflowStatus {
 /// la que empezó: editar el flujo no rompe lo que ya está corriendo.
 model WorkflowVersion {
   id         String   @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
-  tenantId   String   @db.Uuid @map("tenant_id")
-  workflowId String   @db.Uuid @map("workflow_id")
+  tenantId   String   @map("tenant_id") @db.Uuid
+  workflowId String   @map("workflow_id") @db.Uuid
   workflow   Workflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
 
   version Int
@@ -1773,12 +1792,12 @@ model WorkflowVersion {
   /// Validado contra un esquema zod antes de publicarse.
   graph Json @db.JsonB
 
-  publishedAt     DateTime? @db.Timestamptz(6) @map("published_at")
-  publishedByUserId String? @db.Uuid @map("published_by_user_id")
+  publishedAt       DateTime? @map("published_at") @db.Timestamptz(6)
+  publishedByUserId String?   @map("published_by_user_id") @db.Uuid
 
   runs WorkflowRun[]
 
-  createdAt DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   @@unique([workflowId, version])
   @@index([tenantId, workflowId])
@@ -1786,33 +1805,33 @@ model WorkflowVersion {
 }
 
 model WorkflowRun {
-  id         String   @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
-  tenantId   String   @db.Uuid @map("tenant_id")
-  workflowId String   @db.Uuid @map("workflow_id")
-  workflow   Workflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
-  versionId  String   @db.Uuid @map("version_id")
+  id         String          @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  tenantId   String          @map("tenant_id") @db.Uuid
+  workflowId String          @map("workflow_id") @db.Uuid
+  workflow   Workflow        @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  versionId  String          @map("version_id") @db.Uuid
   version    WorkflowVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
 
   status RunStatus @default(PENDING)
 
   /// Qué disparó esta ejecución.
-  triggerEvent String  @db.VarChar(60) @map("trigger_event")
-  subjectType  String? @db.VarChar(40) @map("subject_type")
-  subjectId    String? @db.Uuid @map("subject_id")
+  triggerEvent String  @map("trigger_event") @db.VarChar(60)
+  subjectType  String? @map("subject_type") @db.VarChar(40)
+  subjectId    String? @map("subject_id") @db.Uuid
 
   /// Variables acumuladas: salida de cada nodo disponible para los siguientes.
   context Json @default("{}") @db.JsonB
 
-  currentNodeId String? @db.VarChar(60) @map("current_node_id")
+  currentNodeId String?   @map("current_node_id") @db.VarChar(60)
   /// Cuándo despertar un nodo de espera. El programador lo consulta; una
   /// espera de 3 días no ocupa ningún proceso mientras tanto.
-  resumeAt      DateTime? @db.Timestamptz(6) @map("resume_at")
+  resumeAt      DateTime? @map("resume_at") @db.Timestamptz(6)
 
   errorMessage String? @map("error_message")
-  errorNodeId  String? @db.VarChar(60) @map("error_node_id")
+  errorNodeId  String? @map("error_node_id") @db.VarChar(60)
 
-  startedAt   DateTime  @default(now()) @db.Timestamptz(6) @map("started_at")
-  completedAt DateTime? @db.Timestamptz(6) @map("completed_at")
+  startedAt   DateTime  @default(now()) @map("started_at") @db.Timestamptz(6)
+  completedAt DateTime? @map("completed_at") @db.Timestamptz(6)
 
   steps WorkflowRunStep[]
 
@@ -1837,27 +1856,27 @@ enum RunStatus {
 /// que se abandona.
 model WorkflowRunStep {
   id       String      @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
-  tenantId String      @db.Uuid @map("tenant_id")
-  runId    String      @db.Uuid @map("run_id")
+  tenantId String      @map("tenant_id") @db.Uuid
+  runId    String      @map("run_id") @db.Uuid
   run      WorkflowRun @relation(fields: [runId], references: [id], onDelete: Cascade)
 
-  nodeId   String     @db.VarChar(60) @map("node_id")
-  nodeType String     @db.VarChar(60) @map("node_type")
+  nodeId   String     @map("node_id") @db.VarChar(60)
+  nodeType String     @map("node_type") @db.VarChar(60)
   status   StepStatus @default(PENDING)
 
   input  Json? @db.JsonB
   output Json? @db.JsonB
 
   /// Para nodos de condición: qué rama se tomó y por qué.
-  branchTaken String? @db.VarChar(60) @map("branch_taken")
+  branchTaken String? @map("branch_taken") @db.VarChar(60)
   skipReason  String? @map("skip_reason")
 
   errorMessage String? @map("error_message")
-  attempts     Int @default(0)
+  attempts     Int     @default(0)
 
-  startedAt   DateTime  @default(now()) @db.Timestamptz(6) @map("started_at")
-  completedAt DateTime? @db.Timestamptz(6) @map("completed_at")
-  durationMs  Int? @map("duration_ms")
+  startedAt   DateTime  @default(now()) @map("started_at") @db.Timestamptz(6)
+  completedAt DateTime? @map("completed_at") @db.Timestamptz(6)
+  durationMs  Int?      @map("duration_ms")
 
   @@index([tenantId, runId, startedAt])
   @@map("workflow_run_step")
@@ -1875,18 +1894,18 @@ enum StepStatus {
 /// `allowReenrollment` sin escanear las ejecuciones.
 model WorkflowEnrollment {
   id         String   @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
-  tenantId   String   @db.Uuid @map("tenant_id")
-  workflowId String   @db.Uuid @map("workflow_id")
+  tenantId   String   @map("tenant_id") @db.Uuid
+  workflowId String   @map("workflow_id") @db.Uuid
   workflow   Workflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
 
-  contactId String  @db.Uuid @map("contact_id")
+  contactId String  @map("contact_id") @db.Uuid
   contact   Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
 
-  runId String? @db.Uuid @map("run_id")
+  runId String? @map("run_id") @db.Uuid
 
-  enrolledAt DateTime  @default(now()) @db.Timestamptz(6) @map("enrolled_at")
-  exitedAt   DateTime? @db.Timestamptz(6) @map("exited_at")
-  exitReason String?   @db.VarChar(60) @map("exit_reason")
+  enrolledAt DateTime  @default(now()) @map("enrolled_at") @db.Timestamptz(6)
+  exitedAt   DateTime? @map("exited_at") @db.Timestamptz(6)
+  exitReason String?   @map("exit_reason") @db.VarChar(60)
 
   @@index([tenantId, workflowId, contactId])
   @@index([tenantId, contactId])
@@ -1901,70 +1920,70 @@ model WorkflowEnrollment {
 
 model Document {
   id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
-  tenantId String @db.Uuid @map("tenant_id")
+  tenantId String @map("tenant_id") @db.Uuid
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   kind   DocumentKind
   /// Número visible al cliente: FAC-2026-00041. Generado con bloqueo de fila
   /// en `number_sequence` para que dos emisiones simultáneas nunca lo repitan.
-  number String       @db.VarChar(40)
+  number String         @db.VarChar(40)
   status DocumentStatus @default(DRAFT)
 
-  contactId String?  @db.Uuid @map("contact_id")
+  contactId String?  @map("contact_id") @db.Uuid
   contact   Contact? @relation(fields: [contactId], references: [id], onDelete: SetNull)
-  companyId String?  @db.Uuid @map("company_id")
+  companyId String?  @map("company_id") @db.Uuid
   company   Company? @relation(fields: [companyId], references: [id], onDelete: SetNull)
-  dealId    String?  @db.Uuid @map("deal_id")
+  dealId    String?  @map("deal_id") @db.Uuid
   deal      Deal?    @relation(fields: [dealId], references: [id], onDelete: SetNull)
 
   /// Datos del cliente CONGELADOS al emitir. Si el contacto cambia de
   /// dirección mañana, la factura de ayer no se reescribe sola.
-  billToName    String  @db.VarChar(200) @map("bill_to_name")
-  billToTaxId   String? @db.VarChar(40) @map("bill_to_tax_id")
-  billToEmail   String? @db.VarChar(255) @map("bill_to_email")
+  billToName    String  @map("bill_to_name") @db.VarChar(200)
+  billToTaxId   String? @map("bill_to_tax_id") @db.VarChar(40)
+  billToEmail   String? @map("bill_to_email") @db.VarChar(255)
   billToAddress String? @map("bill_to_address")
-  billToCity    String? @db.VarChar(120) @map("bill_to_city")
-  billToCountry String? @db.Char(2) @map("bill_to_country")
+  billToCity    String? @map("bill_to_city") @db.VarChar(120)
+  billToCountry String? @map("bill_to_country") @db.Char(2)
 
-  issueDate DateTime  @default(now()) @db.Date @map("issue_date")
-  dueDate   DateTime? @db.Date @map("due_date")
-  validUntil DateTime? @db.Date @map("valid_until") // para cotizaciones
+  issueDate  DateTime  @default(now()) @map("issue_date") @db.Date
+  dueDate    DateTime? @map("due_date") @db.Date
+  validUntil DateTime? @map("valid_until") @db.Date // para cotizaciones
 
   currency     String  @default("USD") @db.Char(3)
   /// Tipo de cambio a la moneda de la empresa en el momento de emitir.
-  exchangeRate Decimal @default(1) @db.Decimal(12, 6) @map("exchange_rate")
+  exchangeRate Decimal @default(1) @map("exchange_rate") @db.Decimal(12, 6)
 
   subtotal       Decimal @default(0) @db.Decimal(14, 2)
-  discountAmount Decimal @default(0) @db.Decimal(14, 2) @map("discount_amount")
-  taxAmount      Decimal @default(0) @db.Decimal(14, 2) @map("tax_amount")
+  discountAmount Decimal @default(0) @map("discount_amount") @db.Decimal(14, 2)
+  taxAmount      Decimal @default(0) @map("tax_amount") @db.Decimal(14, 2)
   total          Decimal @default(0) @db.Decimal(14, 2)
-  paidAmount     Decimal @default(0) @db.Decimal(14, 2) @map("paid_amount")
+  paidAmount     Decimal @default(0) @map("paid_amount") @db.Decimal(14, 2)
 
   notes String? @db.Text
   terms String? @db.Text
 
-  templateId String?      @db.Uuid @map("template_id")
+  templateId String?      @map("template_id") @db.Uuid
   template   DocTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
 
-  pdfFileId String? @db.Uuid @map("pdf_file_id")
+  pdfFileId String? @map("pdf_file_id") @db.Uuid
   pdfFile   File?   @relation(fields: [pdfFileId], references: [id], onDelete: SetNull)
 
-  sentAt     DateTime? @db.Timestamptz(6) @map("sent_at")
-  viewedAt   DateTime? @db.Timestamptz(6) @map("viewed_at")
-  acceptedAt DateTime? @db.Timestamptz(6) @map("accepted_at")
-  paidAt     DateTime? @db.Timestamptz(6) @map("paid_at")
-  voidedAt   DateTime? @db.Timestamptz(6) @map("voided_at")
+  sentAt     DateTime? @map("sent_at") @db.Timestamptz(6)
+  viewedAt   DateTime? @map("viewed_at") @db.Timestamptz(6)
+  acceptedAt DateTime? @map("accepted_at") @db.Timestamptz(6)
+  paidAt     DateTime? @map("paid_at") @db.Timestamptz(6)
+  voidedAt   DateTime? @map("voided_at") @db.Timestamptz(6)
 
   /// Documento del que nace (cotización → factura).
-  convertedFromId String? @db.Uuid @map("converted_from_id")
+  convertedFromId String? @map("converted_from_id") @db.Uuid
 
-  createdByUserId String? @db.Uuid @map("created_by_user_id")
+  createdByUserId String? @map("created_by_user_id") @db.Uuid
 
   items    DocumentItem[]
   payments Payment[]
 
-  createdAt DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
-  updatedAt DateTime @updatedAt @db.Timestamptz(6) @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   @@unique([tenantId, kind, number])
   @@index([tenantId, kind, status, issueDate(sort: Desc)])
@@ -1995,26 +2014,26 @@ enum DocumentStatus {
 
 model DocumentItem {
   id         String   @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
-  tenantId   String   @db.Uuid @map("tenant_id")
-  documentId String   @db.Uuid @map("document_id")
+  tenantId   String   @map("tenant_id") @db.Uuid
+  documentId String   @map("document_id") @db.Uuid
   document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
 
-  productId String?  @db.Uuid @map("product_id")
+  productId String?  @map("product_id") @db.Uuid
   product   Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
 
   name        String  @db.VarChar(200)
   description String?
   quantity    Decimal @db.Decimal(12, 3)
   unit        String  @default("unidad") @db.VarChar(30)
-  unitPrice   Decimal @db.Decimal(14, 2) @map("unit_price")
+  unitPrice   Decimal @map("unit_price") @db.Decimal(14, 2)
 
-  discountPercent Decimal @default(0) @db.Decimal(5, 2) @map("discount_percent")
+  discountPercent Decimal @default(0) @map("discount_percent") @db.Decimal(5, 2)
 
-  taxRateId   String?  @db.Uuid @map("tax_rate_id")
-  taxRate     TaxRate? @relation(fields: [taxRateId], references: [id], onDelete: SetNull)
+  taxRateId  String?  @map("tax_rate_id") @db.Uuid
+  taxRate    TaxRate? @relation(fields: [taxRateId], references: [id], onDelete: SetNull)
   /// Porcentaje congelado al emitir: si el IVA sube, la factura vieja no cambia.
-  taxPercent  Decimal  @default(0) @db.Decimal(5, 2) @map("tax_percent")
-  taxAmount   Decimal  @default(0) @db.Decimal(14, 2) @map("tax_amount")
+  taxPercent Decimal  @default(0) @map("tax_percent") @db.Decimal(5, 2)
+  taxAmount  Decimal  @default(0) @map("tax_amount") @db.Decimal(14, 2)
 
   subtotal Decimal @db.Decimal(14, 2)
   total    Decimal @db.Decimal(14, 2)
@@ -2027,8 +2046,8 @@ model DocumentItem {
 
 model Payment {
   id         String   @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
-  tenantId   String   @db.Uuid @map("tenant_id")
-  documentId String   @db.Uuid @map("document_id")
+  tenantId   String   @map("tenant_id") @db.Uuid
+  documentId String   @map("document_id") @db.Uuid
   document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
 
   amount   Decimal       @db.Decimal(14, 2)
@@ -2037,11 +2056,11 @@ model Payment {
 
   reference String?  @db.VarChar(120)
   notes     String?
-  paidAt    DateTime @default(now()) @db.Timestamptz(6) @map("paid_at")
+  paidAt    DateTime @default(now()) @map("paid_at") @db.Timestamptz(6)
 
-  recordedByUserId String? @db.Uuid @map("recorded_by_user_id")
+  recordedByUserId String? @map("recorded_by_user_id") @db.Uuid
 
-  createdAt DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   @@index([tenantId, documentId])
   @@index([tenantId, paidAt(sort: Desc)])
@@ -2059,7 +2078,7 @@ enum PaymentMethod {
 
 model TaxRate {
   id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
-  tenantId String @db.Uuid @map("tenant_id")
+  tenantId String @map("tenant_id") @db.Uuid
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   name      String  @db.VarChar(60) // "IVA 15%"
@@ -2070,7 +2089,7 @@ model TaxRate {
   products      Product[]
   documentItems DocumentItem[]
 
-  createdAt DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   @@unique([tenantId, name])
   @@index([tenantId, active])
@@ -2082,7 +2101,7 @@ model TaxRate {
 /// forma de que dos facturas simultáneas no compartan número.
 model NumberSequence {
   id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
-  tenantId String @db.Uuid @map("tenant_id")
+  tenantId String @map("tenant_id") @db.Uuid
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   kind   DocumentKind
@@ -2094,7 +2113,7 @@ model NumberSequence {
   padding Int    @default(5)
   current Int    @default(0)
 
-  updatedAt DateTime @updatedAt @db.Timestamptz(6) @map("updated_at")
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   @@unique([tenantId, kind, series, year])
   @@map("number_sequence")
@@ -2102,7 +2121,7 @@ model NumberSequence {
 
 model DocTemplate {
   id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
-  tenantId String @db.Uuid @map("tenant_id")
+  tenantId String @map("tenant_id") @db.Uuid
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   name      String       @db.VarChar(80)
@@ -2113,13 +2132,13 @@ model DocTemplate {
   /// PDF lee esto; no hay HTML libre del usuario (superficie de XSS).
   design Json @default("{}") @db.JsonB
 
-  headerNote String? @db.Text @map("header_note")
-  footerNote String? @db.Text @map("footer_note")
+  headerNote String? @map("header_note") @db.Text
+  footerNote String? @map("footer_note") @db.Text
 
   documents Document[]
 
-  createdAt DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
-  updatedAt DateTime @updatedAt @db.Timestamptz(6) @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   @@unique([tenantId, kind, name])
   @@map("doc_template")
@@ -2131,7 +2150,7 @@ model DocTemplate {
 
 model Task {
   id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
-  tenantId String @db.Uuid @map("tenant_id")
+  tenantId String @map("tenant_id") @db.Uuid
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   title       String  @db.VarChar(200)
@@ -2140,28 +2159,28 @@ model Task {
   status   TaskStatus   @default(PENDING)
   priority TaskPriority @default(MEDIUM)
 
-  dueAt       DateTime? @db.Timestamptz(6) @map("due_at")
-  completedAt DateTime? @db.Timestamptz(6) @map("completed_at")
+  dueAt       DateTime? @map("due_at") @db.Timestamptz(6)
+  completedAt DateTime? @map("completed_at") @db.Timestamptz(6)
 
-  assigneeId String? @db.Uuid @map("assignee_id")
+  assigneeId String? @map("assignee_id") @db.Uuid
   assignee   User?   @relation("TaskAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
-  creatorId  String? @db.Uuid @map("creator_id")
+  creatorId  String? @map("creator_id") @db.Uuid
   creator    User?   @relation("TaskCreator", fields: [creatorId], references: [id], onDelete: SetNull)
 
-  contactId String?  @db.Uuid @map("contact_id")
+  contactId String?  @map("contact_id") @db.Uuid
   contact   Contact? @relation(fields: [contactId], references: [id], onDelete: Cascade)
-  dealId    String?  @db.Uuid @map("deal_id")
+  dealId    String?  @map("deal_id") @db.Uuid
   deal      Deal?    @relation(fields: [dealId], references: [id], onDelete: Cascade)
 
   /// Quién la creó: un usuario o una automatización.
   createdByType ActorType @default(USER) @map("created_by_type")
-  workflowRunId String?   @db.Uuid @map("workflow_run_id")
+  workflowRunId String?   @map("workflow_run_id") @db.Uuid
 
   reminders Reminder[]
 
-  createdAt DateTime  @default(now()) @db.Timestamptz(6) @map("created_at")
-  updatedAt DateTime  @updatedAt @db.Timestamptz(6) @map("updated_at")
-  deletedAt DateTime? @db.Timestamptz(6) @map("deleted_at")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
 
   @@index([tenantId, assigneeId, status, dueAt])
   @@index([tenantId, status, dueAt])
@@ -2186,7 +2205,7 @@ enum TaskPriority {
 
 model Event {
   id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
-  tenantId String @db.Uuid @map("tenant_id")
+  tenantId String @map("tenant_id") @db.Uuid
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   title       String  @db.VarChar(200)
@@ -2198,25 +2217,25 @@ model Event {
 
   /// Siempre en UTC. La zona en la que se creó se guarda aparte para poder
   /// mostrar "10:00 hora de Quito" aunque el que mira esté en Madrid.
-  startsAt DateTime @db.Timestamptz(6) @map("starts_at")
-  endsAt   DateTime @db.Timestamptz(6) @map("ends_at")
+  startsAt DateTime @map("starts_at") @db.Timestamptz(6)
+  endsAt   DateTime @map("ends_at") @db.Timestamptz(6)
   timezone String   @default("America/Guayaquil") @db.VarChar(64)
   allDay   Boolean  @default(false) @map("all_day")
 
   /// Regla de recurrencia RFC 5545 (RRULE). Las instancias no se materializan:
   /// se expanden al consultar un rango, y las excepciones viven en
   /// `recurrenceExceptions` para que editar un día no corrompa la serie.
-  recurrenceRule       String?  @db.VarChar(255) @map("recurrence_rule")
-  recurrenceExceptions DateTime[] @db.Timestamptz(6) @map("recurrence_exceptions")
+  recurrenceRule       String?    @map("recurrence_rule") @db.VarChar(255)
+  recurrenceExceptions DateTime[] @map("recurrence_exceptions") @db.Timestamptz(6)
   /// Para una instancia modificada de una serie.
-  recurringEventId     String?  @db.Uuid @map("recurring_event_id")
+  recurringEventId     String?    @map("recurring_event_id") @db.Uuid
 
-  organizerId String? @db.Uuid @map("organizer_id")
+  organizerId String? @map("organizer_id") @db.Uuid
   organizer   User?   @relation("EventOrganizer", fields: [organizerId], references: [id], onDelete: SetNull)
 
-  contactId String?  @db.Uuid @map("contact_id")
+  contactId String?  @map("contact_id") @db.Uuid
   contact   Contact? @relation(fields: [contactId], references: [id], onDelete: SetNull)
-  dealId    String?  @db.Uuid @map("deal_id")
+  dealId    String?  @map("deal_id") @db.Uuid
   deal      Deal?    @relation(fields: [dealId], references: [id], onDelete: SetNull)
 
   status EventStatus @default(CONFIRMED)
@@ -2224,9 +2243,9 @@ model Event {
   attendees EventAttendee[]
   reminders Reminder[]
 
-  createdAt DateTime  @default(now()) @db.Timestamptz(6) @map("created_at")
-  updatedAt DateTime  @updatedAt @db.Timestamptz(6) @map("updated_at")
-  deletedAt DateTime? @db.Timestamptz(6) @map("deleted_at")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
 
   @@index([tenantId, startsAt])
   @@index([tenantId, organizerId, startsAt])
@@ -2250,18 +2269,18 @@ enum EventStatus {
 
 model EventAttendee {
   id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
-  tenantId String @db.Uuid @map("tenant_id")
-  eventId  String @db.Uuid @map("event_id")
+  tenantId String @map("tenant_id") @db.Uuid
+  eventId  String @map("event_id") @db.Uuid
   event    Event  @relation(fields: [eventId], references: [id], onDelete: Cascade)
 
   /// Puede ser un usuario del equipo o un invitado externo por correo.
-  userId    String? @db.Uuid @map("user_id")
-  contactId String? @db.Uuid @map("contact_id")
+  userId    String? @map("user_id") @db.Uuid
+  contactId String? @map("contact_id") @db.Uuid
   email     String? @db.VarChar(255)
   name      String? @db.VarChar(120)
 
-  response AttendeeResponse @default(NEEDS_ACTION)
-  isOrganizer Boolean       @default(false) @map("is_organizer")
+  response    AttendeeResponse @default(NEEDS_ACTION)
+  isOrganizer Boolean          @default(false) @map("is_organizer")
 
   @@unique([eventId, email])
   @@index([tenantId, eventId])
@@ -2277,23 +2296,23 @@ enum AttendeeResponse {
 
 model Reminder {
   id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
-  tenantId String @db.Uuid @map("tenant_id")
+  tenantId String @map("tenant_id") @db.Uuid
 
-  taskId  String? @db.Uuid @map("task_id")
+  taskId  String? @map("task_id") @db.Uuid
   task    Task?   @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  eventId String? @db.Uuid @map("event_id")
+  eventId String? @map("event_id") @db.Uuid
   event   Event?  @relation(fields: [eventId], references: [id], onDelete: Cascade)
 
-  userId String @db.Uuid @map("user_id")
+  userId String @map("user_id") @db.Uuid
 
   /// Momento absoluto en que debe dispararse. El programador consulta por
   /// este índice; no recalcula offsets en cada barrido.
-  remindAt DateTime @db.Timestamptz(6) @map("remind_at")
+  remindAt DateTime        @map("remind_at") @db.Timestamptz(6)
   channel  ReminderChannel @default(IN_APP)
 
-  sentAt DateTime? @db.Timestamptz(6) @map("sent_at")
+  sentAt DateTime? @map("sent_at") @db.Timestamptz(6)
 
-  createdAt DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   @@index([remindAt, sentAt])
   @@index([tenantId, userId])
@@ -2310,12 +2329,12 @@ enum ReminderChannel {
 /// Disponibilidad semanal de un usuario, para agendar reuniones.
 model Availability {
   id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
-  tenantId String @db.Uuid @map("tenant_id")
-  userId   String @db.Uuid @map("user_id")
+  tenantId String @map("tenant_id") @db.Uuid
+  userId   String @map("user_id") @db.Uuid
   user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   /// 0 = domingo … 6 = sábado
-  weekday   Int
+  weekday     Int
   /// Minutos desde medianoche en la zona del usuario: 540 = 09:00
   startMinute Int @map("start_minute")
   endMinute   Int @map("end_minute")
@@ -2331,12 +2350,12 @@ model Availability {
 
 model Dashboard {
   id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
-  tenantId String @db.Uuid @map("tenant_id")
+  tenantId String @map("tenant_id") @db.Uuid
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
-  name String @db.VarChar(120)
+  name    String  @db.VarChar(120)
   /// Si es nulo, el panel es de la empresa; si tiene valor, es privado de ese usuario.
-  ownerId String? @db.Uuid @map("owner_id")
+  ownerId String? @map("owner_id") @db.Uuid
 
   isDefault Boolean @default(false) @map("is_default")
   /// Plantilla de la que nació: "sales" | "support" | "executive".
@@ -2347,8 +2366,8 @@ model Dashboard {
 
   widgets Widget[]
 
-  createdAt DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
-  updatedAt DateTime @updatedAt @db.Timestamptz(6) @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   @@index([tenantId, ownerId])
   @@map("dashboard")
@@ -2356,8 +2375,8 @@ model Dashboard {
 
 model Widget {
   id          String    @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
-  tenantId    String    @db.Uuid @map("tenant_id")
-  dashboardId String    @db.Uuid @map("dashboard_id")
+  tenantId    String    @map("tenant_id") @db.Uuid
+  dashboardId String    @map("dashboard_id") @db.Uuid
   dashboard   Dashboard @relation(fields: [dashboardId], references: [id], onDelete: Cascade)
 
   type  WidgetType
@@ -2373,8 +2392,8 @@ model Widget {
 
   sortOrder Int @default(0) @map("sort_order")
 
-  createdAt DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
-  updatedAt DateTime @updatedAt @db.Timestamptz(6) @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   @@index([tenantId, dashboardId, sortOrder])
   @@map("widget")
@@ -2395,13 +2414,13 @@ enum WidgetType {
 /// una tabla genérica en "mis leads calientes de Quito".
 model SavedView {
   id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
-  tenantId String @db.Uuid @map("tenant_id")
+  tenantId String @map("tenant_id") @db.Uuid
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   entity EntityType
   name   String     @db.VarChar(120)
 
-  ownerId  String? @db.Uuid @map("owner_id")
+  ownerId  String? @map("owner_id") @db.Uuid
   isShared Boolean @default(false) @map("is_shared")
 
   filters Json @default("{}") @db.JsonB
@@ -2410,8 +2429,8 @@ model SavedView {
 
   isDefault Boolean @default(false) @map("is_default")
 
-  createdAt DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
-  updatedAt DateTime @updatedAt @db.Timestamptz(6) @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   @@unique([tenantId, entity, ownerId, name])
   @@index([tenantId, entity])
@@ -2420,10 +2439,10 @@ model SavedView {
 
 model Notification {
   id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
-  tenantId String @db.Uuid @map("tenant_id")
+  tenantId String @map("tenant_id") @db.Uuid
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
-  userId String @db.Uuid @map("user_id")
+  userId String @map("user_id") @db.Uuid
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   type  NotificationType
@@ -2433,12 +2452,12 @@ model Notification {
   /// A dónde lleva al hacer clic: "/w/acme/chat/abc123".
   link String?
 
-  resourceType String? @db.VarChar(40) @map("resource_type")
-  resourceId   String? @db.Uuid @map("resource_id")
+  resourceType String? @map("resource_type") @db.VarChar(40)
+  resourceId   String? @map("resource_id") @db.Uuid
 
-  readAt DateTime? @db.Timestamptz(6) @map("read_at")
+  readAt DateTime? @map("read_at") @db.Timestamptz(6)
 
-  createdAt DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   @@index([tenantId, userId, readAt, createdAt(sort: Desc)])
   @@map("notification")
@@ -2463,33 +2482,33 @@ enum NotificationType {
 /// fuentes de IA: un solo sitio donde contar almacenamiento y purgar.
 model File {
   id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
-  tenantId String @db.Uuid @map("tenant_id")
+  tenantId String @map("tenant_id") @db.Uuid
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   /// Clave en el bucket. Nombre reescrito: el original nunca llega al disco.
-  storageKey String @unique @db.VarChar(400) @map("storage_key")
+  storageKey String @unique @map("storage_key") @db.VarChar(400)
   bucket     String @default("nexo") @db.VarChar(60)
 
-  originalName String @db.VarChar(255) @map("original_name")
+  originalName String  @map("original_name") @db.VarChar(255)
   /// Detectado por número mágico, no por extensión.
-  mimeType     String @db.VarChar(120) @map("mime_type")
-  sizeBytes    Int @map("size_bytes")
+  mimeType     String  @map("mime_type") @db.VarChar(120)
+  sizeBytes    Int     @map("size_bytes")
   checksum     String? @db.VarChar(64)
 
   purpose FilePurpose @default(ATTACHMENT)
 
-  uploadedById String? @db.Uuid @map("uploaded_by_id")
+  uploadedById String? @map("uploaded_by_id") @db.Uuid
   uploadedBy   User?   @relation(fields: [uploadedById], references: [id], onDelete: SetNull)
 
   scanStatus ScanStatus @default(PENDING) @map("scan_status")
-  scanResult String? @map("scan_result")
+  scanResult String?    @map("scan_result")
 
-  media      MessageMedia[]
-  aiSources  AiSource[]
-  documents  Document[]
+  media     MessageMedia[]
+  aiSources AiSource[]
+  documents Document[]
 
-  createdAt DateTime  @default(now()) @db.Timestamptz(6) @map("created_at")
-  deletedAt DateTime? @db.Timestamptz(6) @map("deleted_at")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
 
   @@index([tenantId, purpose, createdAt(sort: Desc)])
   @@index([tenantId, deletedAt])
@@ -2518,7 +2537,7 @@ enum ScanStatus {
 /// propios sistemas. Firmados con HMAC-SHA256 y reintentados hasta 24 h.
 model OutboundWebhook {
   id       String @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
-  tenantId String @db.Uuid @map("tenant_id")
+  tenantId String @map("tenant_id") @db.Uuid
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   name   String   @db.VarChar(80)
@@ -2531,14 +2550,14 @@ model OutboundWebhook {
   active Boolean @default(true)
 
   /// Estadísticas para que el usuario vea si su endpoint está respondiendo.
-  lastDeliveryAt     DateTime? @db.Timestamptz(6) @map("last_delivery_at")
-  lastStatusCode     Int? @map("last_status_code")
-  consecutiveFailures Int      @default(0) @map("consecutive_failures")
+  lastDeliveryAt      DateTime? @map("last_delivery_at") @db.Timestamptz(6)
+  lastStatusCode      Int?      @map("last_status_code")
+  consecutiveFailures Int       @default(0) @map("consecutive_failures")
   /// Desactivado automáticamente tras demasiados fallos seguidos.
-  disabledAt         DateTime? @db.Timestamptz(6) @map("disabled_at")
+  disabledAt          DateTime? @map("disabled_at") @db.Timestamptz(6)
 
-  createdAt DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
-  updatedAt DateTime @updatedAt @db.Timestamptz(6) @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   @@index([tenantId, active])
   @@map("outbound_webhook")
