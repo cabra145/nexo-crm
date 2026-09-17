@@ -46,6 +46,13 @@ interface MembershipRow {
 /** Estados en los que una empresa admite iniciar sesión. */
 const USABLE_TENANT_STATUSES = new Set(['TRIAL', 'ACTIVE', 'PAST_DUE']);
 
+/**
+ * Tokens sin usar que puede acumular una familia por reintentos dentro del
+ * margen (ver SessionService.isRetryAfterLostResponse). Tres cubre de sobra
+ * varias pestañas que recargan a la vez; más sería fabricar sesiones.
+ */
+const MAX_RETRY_SIBLINGS = 3;
+
 @Injectable()
 export class SessionService {
   private readonly logger = new Logger('Sesiones');
@@ -257,6 +264,13 @@ export class SessionService {
    * quién es el legítimo, así que se revoca la familia entera y los dos tienen
    * que volver a iniciar sesión. El legítimo pierde una sesión; el atacante
    * pierde el acceso.
+   *
+   * Con UNA excepción, la respuesta perdida: el servidor canjea el token y
+   * emite el siguiente, pero la respuesta —con la cookie nueva— no llega al
+   * navegador porque la petición se cortó (recarga de la página, cierre de la
+   * pestaña, corte de red). El navegador sigue con la cookie anterior y la
+   * vuelve a presentar. Eso no es un robo, y tratarlo como tal cerraría la
+   * sesión de un usuario legítimo. Ver `isRetryAfterLostResponse`.
    */
   async rotate(
     refreshToken: string,
@@ -265,7 +279,7 @@ export class SessionService {
   ): Promise<{ session: SessionResponse; refreshToken: string }> {
     const { tenantId } = options;
     const tokenHash = sha256(refreshToken);
-    const existing = await this.db.platform.refreshToken.findUnique({
+    let existing = await this.db.platform.refreshToken.findUnique({
       where: { tokenHash },
       include: { user: true },
     });
@@ -278,16 +292,23 @@ export class SessionService {
         detail: 'Tu sesión ha terminado. Vuelve a iniciar sesión.',
       });
 
-    if (!existing) throw expired();
+    if (!existing || existing.revokedAt) throw expired();
 
-    if (existing.usedAt || existing.revokedAt) {
-      if (existing.usedAt && !existing.revokedAt) {
-        await this.revokeFamily(existing.familyId, 'reuse_detected');
-        this.logger.warn(
-          `Reuso de token de refresco detectado (usuario ${existing.userId}, familia ${existing.familyId}): familia revocada`,
-        );
+    const reuseDetected = async (familyId: string, userId: string) => {
+      await this.revokeFamily(familyId, 'reuse_detected');
+      this.logger.warn(
+        `Reuso de token de refresco detectado (usuario ${userId}, familia ${familyId}): familia revocada`,
+      );
+      return expired();
+    };
+
+    // Ya canjeado: o es el reintento de una respuesta perdida, o es un robo.
+    let retry = false;
+    if (existing.usedAt) {
+      if (!(await this.isRetryAfterLostResponse(existing, req))) {
+        throw await reuseDetected(existing.familyId, existing.userId);
       }
-      throw expired();
+      retry = true;
     }
 
     if (
@@ -320,15 +341,31 @@ export class SessionService {
       });
     }
 
-    // Canje atómico: si dos peticiones llegan a la vez con el mismo token, sólo
-    // una lo marca como usado. La otra se trata como reuso.
-    const claimed = await this.db.platform.refreshToken.updateMany({
-      where: { id: existing.id, usedAt: null, revokedAt: null },
-      data: { usedAt: new Date() },
-    });
-    if (claimed.count === 0) {
-      await this.revokeFamily(existing.familyId, 'reuse_detected');
-      throw expired();
+    if (!retry) {
+      // Canje atómico: si dos peticiones llegan a la vez con el mismo token,
+      // sólo una lo marca como usado. La otra se evalúa con la fila ya
+      // canjeada, igual que si hubiera llegado un instante después.
+      const claimed = await this.db.platform.refreshToken.updateMany({
+        where: { id: existing.id, usedAt: null, revokedAt: null },
+        data: { usedAt: new Date() },
+      });
+      if (claimed.count === 0) {
+        existing = await this.db.platform.refreshToken.findUnique({
+          where: { id: existing.id },
+          include: { user: true },
+        });
+        if (!existing || existing.revokedAt) throw expired();
+        if (!(await this.isRetryAfterLostResponse(existing, req))) {
+          throw await reuseDetected(existing.familyId, existing.userId);
+        }
+        retry = true;
+      }
+    }
+
+    if (retry) {
+      this.logger.log(
+        `Token de refresco presentado de nuevo tras una respuesta perdida (usuario ${existing.userId}, familia ${existing.familyId}): se emite otro`,
+      );
     }
 
     return this.issue({
@@ -337,6 +374,55 @@ export class SessionService {
       tenantId: tenantId ?? existing.tenantId ?? undefined,
       familyId: existing.familyId,
     });
+  }
+
+  /**
+   * ¿Es este token ya canjeado el reintento de una respuesta que no llegó?
+   *
+   * Sólo si se cumplen TODAS estas condiciones; si falla una, es reuso y se
+   * revoca la familia:
+   *
+   *  1. Se canjeó hace menos de `refreshRetryGraceSeconds` (20 s). Una copia
+   *     robada que se use más tarde se detecta igual que siempre.
+   *  2. Lo presenta el mismo navegador (User-Agent idéntico al del token).
+   *  3. La cadena no avanzó: ningún token posterior de la familia se ha usado
+   *     ni revocado. Si el navegador legítimo ya usó el sucesor, el token
+   *     anterior sólo puede estar en manos de otro.
+   *  4. Como mucho `MAX_RETRY_SIBLINGS` tokens sin usar tras él, para que el
+   *     margen no sirva para fabricar sesiones en bucle.
+   *
+   * Lo que se acepta a cambio: durante esos 20 s, quien tenga una copia de la
+   * cookie Y el mismo User-Agent obtiene una sesión en vez de provocar la
+   * revocación. Es el mismo compromiso que el «reuse interval» de Auth0 o el
+   * «grace period» de Okta, y en cuanto cualquiera de las dos sesiones avanza
+   * y la otra presenta un token viejo, la familia entera cae.
+   */
+  private async isRetryAfterLostResponse(
+    token: {
+      id: string;
+      familyId: string;
+      usedAt: Date | null;
+      createdAt: Date;
+      userAgent: string | null;
+    },
+    req: Request,
+  ): Promise<boolean> {
+    if (!token.usedAt) return false;
+    const ageMs = Date.now() - token.usedAt.getTime();
+    if (ageMs < 0 || ageMs > AUTH_TIMINGS.refreshRetryGraceSeconds * 1000) return false;
+
+    const userAgent = req.headers['user-agent']?.slice(0, 500) ?? null;
+    if (userAgent === null || userAgent !== token.userAgent) return false;
+
+    // Sucesores: tokens de la familia emitidos después de este. Se compara
+    // con created_at, que pone Postgres en los dos, para no depender de que
+    // el reloj de la API y el de la base coincidan.
+    const successors = await this.db.platform.refreshToken.findMany({
+      where: { familyId: token.familyId, createdAt: { gt: token.createdAt } },
+      select: { usedAt: true, revokedAt: true },
+    });
+    if (successors.some((t) => t.usedAt || t.revokedAt)) return false;
+    return successors.length < MAX_RETRY_SIBLINGS;
   }
 
   async revokeFamily(familyId: string, reason: string): Promise<void> {

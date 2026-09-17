@@ -12,8 +12,10 @@
  *
  *   pnpm --filter @nexo/api auth:e2e
  */
+import { createHash } from 'node:crypto';
 import {
   AUTH_PROBLEMS,
+  AUTH_TIMINGS,
   CLIENT_HEADER,
   CLIENT_HEADER_VALUE,
   PROBLEM_TYPES,
@@ -68,6 +70,7 @@ async function http<T = Record<string, unknown>>(
     cookie?: string | null;
     client?: boolean;
     origin?: string;
+    userAgent?: string;
   } = {},
 ): Promise<HttpResult<T>> {
   const headers: Record<string, string> = { Accept: 'application/json' };
@@ -76,6 +79,7 @@ async function http<T = Record<string, unknown>>(
   if (opts.cookie) headers.Cookie = `${REFRESH_COOKIE}=${opts.cookie}`;
   if (opts.client) headers[CLIENT_HEADER] = CLIENT_HEADER_VALUE;
   if (opts.origin) headers.Origin = opts.origin;
+  if (opts.userAgent) headers['User-Agent'] = opts.userAgent;
 
   const res = await fetch(`${API}${path}`, {
     method,
@@ -291,14 +295,78 @@ async function main(): Promise<void> {
       own.status === 200 && Boolean(own.refreshCookie) && own.refreshCookie !== cookie,
     );
 
-    const stolen = cookie;
-    cookie = own.refreshCookie;
-    const replay = await http('POST', '/auth/refresh', { cookie: stolen, client: true });
-    check('reusar la cookie anterior (robada) → 401', replay.status === 401);
-    const afterReplay = await http('POST', '/auth/refresh', { cookie, client: true });
+    const refresh = (c: string | null, userAgent?: string) =>
+      http('POST', '/auth/refresh', { cookie: c, client: true, userAgent });
+    const loginFresh = async () =>
+      (
+        await http('POST', '/auth/login', {
+          body: { email: owner1.email, password: owner1.password },
+        })
+      ).refreshCookie;
+
+    // Respuesta perdida: la API canjeó `cookie` y emitió `own.refreshCookie`,
+    // pero el navegador no recibió la respuesta (recarga, corte de red) y
+    // vuelve a presentar la cookie anterior. No es un robo.
+    const lost = cookie;
+    const retry = await refresh(lost);
+    check(
+      'respuesta perdida: la cookie anterior, reintentada al momento desde el mismo navegador → sesión nueva',
+      retry.status === 200 && Boolean(retry.refreshCookie),
+    );
+    const firstStillValid = await refresh(own.refreshCookie);
+    check(
+      '…y el token que se perdió por el camino sigue sirviendo',
+      firstStillValid.status === 200,
+    );
+
+    // Robo 1: la cadena ya avanzó (el navegador legítimo usó el sucesor).
+    const afterAdvance = await refresh(lost);
+    check(
+      'reusar la cookie anterior cuando la cadena ya avanzó (robo) → 401',
+      afterAdvance.status === 401,
+    );
+    const legitAfterTheft = await refresh(firstStillValid.refreshCookie);
     check(
       '…y la sesión LEGÍTIMA también queda revocada (familia entera)',
-      afterReplay.status === 401,
+      legitAfterTheft.status === 401,
+    );
+
+    // Robo 2: otro navegador, aunque sea dentro del margen.
+    let stolen = await loginFresh();
+    const legit2 = await refresh(stolen);
+    const otherBrowser = await refresh(stolen, 'Mozilla/5.0 (Atacante)');
+    check('reusar la cookie desde otro navegador, al momento → 401', otherBrowser.status === 401);
+    check('…y revoca la familia', (await refresh(legit2.refreshCookie)).status === 401);
+
+    // Robo 3: fuera del margen de reintento.
+    stolen = await loginFresh();
+    const legit3 = await refresh(stolen);
+    await db.refreshToken.update({
+      where: {
+        tokenHash: createHash('sha256')
+          .update(stolen ?? '')
+          .digest('hex'),
+      },
+      data: {
+        usedAt: new Date(Date.now() - (AUTH_TIMINGS.refreshRetryGraceSeconds + 5) * 1000),
+      },
+    });
+    const afterGrace = await refresh(stolen);
+    check(
+      `reusar la cookie pasados ${AUTH_TIMINGS.refreshRetryGraceSeconds} s, desde el mismo navegador → 401`,
+      afterGrace.status === 401,
+    );
+    check('…y revoca la familia', (await refresh(legit3.refreshCookie)).status === 401);
+
+    // Tope: el margen no sirve para fabricar sesiones.
+    stolen = await loginFresh();
+    await refresh(stolen);
+    const siblings: number[] = [];
+    for (let i = 0; i < 3; i++) siblings.push((await refresh(stolen)).status);
+    check(
+      'reintentos dentro del margen: como mucho 3 tokens sin usar; el siguiente → 401',
+      siblings.join(',') === '200,200,401',
+      siblings.join(','),
     );
 
     /* ---------------------------------------------------------------------- */

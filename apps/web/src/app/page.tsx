@@ -1,12 +1,25 @@
-import { redirect } from 'next/navigation';
+'use client';
+
+import { useRouter } from 'next/navigation';
+import { useEffect } from 'react';
+import { refreshSession } from '@/lib/auth/session';
 
 /**
- * Raíz del producto.
+ * Raíz: al espacio de trabajo si hay sesión, al inicio de sesión si no.
  *
- * Hasta la Fase 1 lleva al estado del sistema. Con la autenticación, llevará
- * al espacio de trabajo del usuario si tiene sesión, o al inicio de sesión si
- * no la tiene.
+ * La comprobación se hace en el navegador: la sesión vive en una cookie del
+ * dominio de la API, que el servidor de la web no ve.
  */
 export default function Home() {
-  redirect('/estado');
+  const router = useRouter();
+
+  useEffect(() => {
+    void refreshSession()
+      .then((session) =>
+        router.replace(session ? `/w/${session.activeTenant.tenantSlug}` : '/login'),
+      )
+      .catch(() => router.replace('/login'));
+  }, [router]);
+
+  return <div className="min-h-dvh bg-canvas" aria-busy="true" aria-label="Cargando" />;
 }

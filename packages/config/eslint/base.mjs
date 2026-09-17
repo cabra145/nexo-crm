@@ -25,6 +25,9 @@ export function baseConfig({ tsconfigRootDir }) {
       ignores: [
         '**/dist/**',
         '**/.next/**',
+        '**/.next-ci/**',
+        '**/playwright-report/**',
+        '**/test-results/**',
         '**/.turbo/**',
         '**/coverage/**',
         '**/node_modules/**',

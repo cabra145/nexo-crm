@@ -39,6 +39,10 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
+  // Las pruebas en navegador compilan la web en otra carpeta (.next-ci): así
+  // no pisan la `.next` que está usando `pnpm dev` si está corriendo a la vez.
+  distDir: process.env.NEXT_DIST_DIR ?? '.next',
+
   // Sin cabecera X-Powered-By: no hay por qué anunciar la tecnología.
   poweredByHeader: false,
   reactStrictMode: true,

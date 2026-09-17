@@ -155,6 +155,25 @@ export const slugSchema = z
   .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, 'sólo minúsculas, números y guiones')
   .refine((v) => !RESERVED_SLUGS.has(v), { message: 'ese nombre está reservado' });
 
+/**
+ * "Constructora Kairós S.A." → "constructora-kairos-s-a"
+ *
+ * Una sola implementación para la web (que la muestra en vivo mientras se
+ * escribe el nombre de la empresa) y la API (que la usa al registrar): la
+ * dirección que ve el usuario es exactamente la que obtendrá, salvo que esté
+ * ocupada o reservada, en cuyo caso la API le añade un sufijo.
+ */
+export function toSlug(value: string): string {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 50)
+    .replace(/-+$/g, '');
+}
+
 /** Rutas que no pueden ser el identificador de una empresa. */
 export const RESERVED_SLUGS = new Set([
   'admin',

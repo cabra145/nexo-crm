@@ -12,16 +12,16 @@ documentos de IA y su facturación.
 
 ## Estado
 
-| Fase  | Contenido                                                                              | Estado                               |
-| ----- | -------------------------------------------------------------------------------------- | ------------------------------------ |
-| **0** | Monorepo, esquema de datos, RLS, contratos, infraestructura de desarrollo, ESLint y CI | **Terminada**                        |
-| 1     | Auth con 2FA, multi-tenant, RBAC, contactos, empresas, embudo Kanban, tareas           | **En curso** · 1.1 y 1.2a terminados |
-| 2     | WhatsApp Business Cloud API                                                            | Pendiente                            |
-| 3     | IA con RAG por empresa                                                                 | Pendiente                            |
-| 4     | Motor de automatizaciones visual                                                       | Pendiente                            |
-| 5     | Documentos comerciales y suscripciones                                                 | Pendiente                            |
-| 6     | Calendario, dashboards, panel de plataforma                                            | Pendiente                            |
-| 7     | Endurecimiento y puesta en producción                                                  | Pendiente                            |
+| Fase  | Contenido                                                                              | Estado                                     |
+| ----- | -------------------------------------------------------------------------------------- | ------------------------------------------ |
+| **0** | Monorepo, esquema de datos, RLS, contratos, infraestructura de desarrollo, ESLint y CI | **Terminada**                              |
+| 1     | Auth con 2FA, multi-tenant, RBAC, contactos, empresas, embudo Kanban, tareas           | **En curso** · 1.1, 1.2a y 1.2b terminados |
+| 2     | WhatsApp Business Cloud API                                                            | Pendiente                                  |
+| 3     | IA con RAG por empresa                                                                 | Pendiente                                  |
+| 4     | Motor de automatizaciones visual                                                       | Pendiente                                  |
+| 5     | Documentos comerciales y suscripciones                                                 | Pendiente                                  |
+| 6     | Calendario, dashboards, panel de plataforma                                            | Pendiente                                  |
+| 7     | Endurecimiento y puesta en producción                                                  | Pendiente                                  |
 
 La arquitectura completa —incluidas las decisiones descartadas y por qué— está
 en [`docs/arquitectura.md`](docs/arquitectura.md).
@@ -89,7 +89,7 @@ pnpm dev
 
 |                         |                                  |
 | ----------------------- | -------------------------------- |
-| Producto                | <http://localhost:3000/w/acme>   |
+| Producto                | <http://localhost:3000/login>    |
 | Panel de plataforma     | <http://localhost:3000/admin>    |
 | API                     | <http://localhost:4000/api/v1>   |
 | Documentación de la API | <http://localhost:4000/api/docs> |
@@ -222,10 +222,10 @@ está nada.
 Cada push a `main` y cada Pull Request ejecutan dos trabajos en paralelo
 ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)):
 
-| Trabajo         | Qué comprueba                                                                                                                                                                                                                              |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Calidad**     | Formato, lint, tipos y build de producción de los seis paquetes                                                                                                                                                                            |
-| **Integración** | Sobre una base de datos **vacía**: rol de aplicación, migraciones, RLS, seed, prueba de aislamiento (19 comprobaciones), API real (sondas, errores RFC 7807, cabeceras), worker real, prueba de humo (14 comprobaciones) y cierre ordenado |
+| Trabajo         | Qué comprueba                                                                                                                                                                                                                                                                                                                                                |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Calidad**     | Formato, lint, tipos y build de producción de los seis paquetes                                                                                                                                                                                                                                                                                              |
+| **Integración** | Sobre una base de datos **vacía**: rol de aplicación, migraciones, RLS, seed, prueba de aislamiento (29 comprobaciones), alta de empresa (6), API real (sondas, errores RFC 7807, cabeceras), worker real, autenticación de extremo a extremo, prueba de humo (14 comprobaciones), web de producción con pruebas de navegador (Playwright) y cierre ordenado |
 
 La integración es un script, no YAML: `pnpm ci:local` ejecuta exactamente lo
 mismo en tu máquina, con contenedores desechables en puertos propios que no

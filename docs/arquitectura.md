@@ -154,10 +154,36 @@ y tres políticas de **sólo lectura** le dejan ver sus membresías, las empresa
 las que pertenece y sus roles. Nada más: los datos de negocio siguen exigiendo
 `app.tenant_id`.
 
-**Pendiente para el bloque 1.2b:** la web tiene que serializar la renovación de
-la sesión entre pestañas (una sola petición de refresco a la vez). Con la
-detección de reuso estricta, dos pestañas renovando a la vez con la misma
-cookie cerrarían la sesión.
+### Autenticación en la web — bloque 1.2b
+
+| Decisión                                                   | Por qué                                                                                                                                                                                  |
+| ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Renovación serializada entre pestañas**                  | Web Locks (`nexo:session-refresh`): una pestaña renueva a la vez; BroadcastChannel reparte la sesión nueva. Sin esto, la detección de reuso cerraría la sesión con dos pestañas abiertas |
+| **La puerta de `/w/[empresa]` se decide en el navegador**  | La cookie de refresco es del dominio de la API y el servidor de la web no la ve. La protección real sigue en la API: sin token no hay datos                                              |
+| **Tokens de un solo uso fuera de la URL**                  | Verificación y recuperación leen el token y lo quitan con `history.replaceState`; además `Referrer-Policy: no-referrer` en esas páginas                                                  |
+| **`next` sólo acepta rutas propias**                       | `safeNext` descarta URLs absolutas y `//dominio`: sin redirección abierta tras el login                                                                                                  |
+| **Pruebas de navegador con Playwright contra la API real** | Registro con el enlace de Mailpit, 2FA con TOTP calculado en la prueba, códigos de recuperación, recuperación de contraseña y tres pestañas recargando a la vez                          |
+
+**Margen de reintento del token de refresco (20 s).** Las pruebas de navegador
+lo destaparon: una recarga puede cortar una renovación DESPUÉS de que la API la
+procese. La cookie nueva no llega, el navegador presenta la anterior y la
+detección de reuso cerraba la sesión de un usuario legítimo; lo mismo pasa con
+un corte de red. Ahora un token ya canjeado se acepta de nuevo sólo si: se
+canjeó hace menos de 20 s, llega con el mismo User-Agent, ningún token posterior
+de la familia se ha usado ni revocado, y hay menos de 3 sin usar. Si falla
+cualquiera, es reuso y cae la familia. Es el compromiso del «reuse interval» de
+Auth0 y el «grace period» de Okta; `auth:e2e` cubre el reintento y los tres
+robos (cadena avanzada, otro navegador, fuera de plazo) y el tope.
+
+**Auditoría idempotente sin errores.** Un reintento del mismo evento de
+auditoría chocaba con `audit_log_pkey` y el worker capturaba el P2002, pero
+Prisma ya había escrito `Unique constraint failed` en el log. Ahora es
+`INSERT … ON CONFLICT (id) DO NOTHING` (`createMany` con `skipDuplicates`): cero
+filas = ya registrada. El CI falla si el log del worker contiene `prisma:error`.
+
+`localhost`, no `127.0.0.1`, en `APP_URL` y `NEXT_PUBLIC_API_URL`: web y API
+tienen que ser el mismo _sitio_ para que el navegador envíe la cookie
+`SameSite=Lax`.
 
 ### El particionado de `message` queda aplazado
 

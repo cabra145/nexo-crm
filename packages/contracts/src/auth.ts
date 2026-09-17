@@ -26,6 +26,12 @@ export const AUTH_TIMINGS = {
   twoFactorChallengeMinutes: 5,
   /** Plazo que tiene un propietario para activar el 2FA. */
   ownerTwoFactorGraceDays: 7,
+  /**
+   * Margen para volver a presentar un token de refresco recién canjeado cuya
+   * respuesta no llegó al navegador (petición cortada por una recarga o por
+   * la red). Ver SessionService.rotate.
+   */
+  refreshRetryGraceSeconds: 20,
 } as const;
 
 /** Nombre de la cookie httpOnly del token de refresco. */

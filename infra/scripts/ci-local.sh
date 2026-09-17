@@ -6,7 +6,9 @@
 #
 #  Levanta Postgres, Redis y Mailpit en contenedores DESECHABLES con puertos
 #  propios (55432, 56379, 51025/58025), así que no toca tu entorno de
-#  desarrollo ni sus datos. Compila la API y el worker, ejecuta
+#  desarrollo ni sus datos (la web se compila en apps/web/.next-ci y se sirve
+#  en :43000, así que un `pnpm dev` en marcha tampoco se entera). Compila la
+#  API y el worker, ejecuta
 #  infra/scripts/ci-integration.sh sobre una base vacía y elimina los
 #  contenedores al terminar, pase lo que pase.
 # =============================================================================
@@ -28,7 +30,7 @@ teardown() {
 }
 trap teardown EXIT
 
-for port in $PG_PORT $REDIS_PORT $SMTP_PORT $MAILPIT_PORT 44000 44100; do
+for port in $PG_PORT $REDIS_PORT $SMTP_PORT $MAILPIT_PORT 44000 44100 43000; do
   if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
     echo "El puerto $port está ocupado. Libéralo o detén la ejecución anterior." >&2
     exit 1
@@ -54,6 +56,13 @@ for _ in $(seq 1 60); do
 done
 echo "  ✓ Postgres :$PG_PORT · Redis :$REDIS_PORT · Mailpit :$MAILPIT_PORT"
 
+echo "▸ Chromium para las pruebas de navegador"
+# Se descarga una vez (~/Library/Caches/ms-playwright); después no hace nada.
+# Si la descarga falla (red), se sigue: si el navegador ya estaba instalado las
+# pruebas corren, y si no, fallan diciendo que falta.
+pnpm --silent --filter @nexo/web exec playwright install --no-shell chromium \
+  || echo "  ! no se pudo descargar Chromium; se usa el ya instalado, si lo hay" >&2
+
 echo "▸ Build de API y worker"
 pnpm --silent turbo run build --filter=@nexo/api --filter=@nexo/worker --output-logs=errors-only
 
@@ -65,6 +74,6 @@ env -i PATH="$PATH" HOME="$HOME" \
   DIRECT_DATABASE_URL="postgresql://nexo:ci_owner_password@127.0.0.1:$PG_PORT/nexo?schema=public" \
   REDIS_URL="redis://127.0.0.1:$REDIS_PORT" \
   SMTP_HOST=127.0.0.1 SMTP_PORT="$SMTP_PORT" MAILPIT_URL="http://127.0.0.1:$MAILPIT_PORT" \
-  API_PORT=44000 WORKER_HEALTH_PORT=44100 \
+  API_PORT=44000 WORKER_HEALTH_PORT=44100 WEB_PORT=43000 \
   CI_LOG_DIR="$ROOT/.ci-logs" \
   bash infra/scripts/ci-integration.sh

@@ -5,7 +5,8 @@
 #
 #    Calidad      formato · lint · tipos · build de producción
 #    Integración  base de datos VACÍA → migraciones → RLS → seed → prueba de
-#                 aislamiento → API → worker → prueba de humo → cierre ordenado
+#                 aislamiento → API → worker → autenticación → prueba de humo
+#                 → web en producción + pruebas de navegador → cierre ordenado
 #
 #  La integración ejecuta infra/scripts/ci-integration.sh, el mismo script que
 #  se puede lanzar en local: lo que pasa aquí se puede reproducir en un Mac.
@@ -82,7 +83,7 @@ jobs:
   integration:
     name: Integración
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
 
     # Credenciales de usar y tirar: sólo existen durante esta ejecución, en
     # contenedores que se destruyen al terminar. No son secretos del proyecto.
@@ -146,10 +147,15 @@ jobs:
       - name: Dependencias
         run: pnpm install --frozen-lockfile
 
-      # Sólo lo que se ejecuta en la prueba: API, worker y los paquetes de los
-      # que dependen. La web ya se compila en el trabajo de Calidad.
+      # API, worker y los paquetes de los que dependen. La web la compila el
+      # propio script: su NEXT_PUBLIC_API_URL depende de la API de la prueba.
       - name: Build de API y worker
         run: pnpm turbo run build --filter=@nexo/api --filter=@nexo/worker
+
+      # La versión del navegador la fija @playwright/test en el lockfile.
+      # --with-deps instala también las librerías del sistema que necesita.
+      - name: Chromium para las pruebas de navegador
+        run: pnpm --filter @nexo/web exec playwright install --with-deps --no-shell chromium
 
       - name: Integración completa
         run: bash infra/scripts/ci-integration.sh
@@ -159,5 +165,8 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: logs-integracion
-          path: .ci-logs/
+          path: |
+            .ci-logs/
+            apps/web/test-results/
+            apps/web/playwright-report/
           retention-days: 7

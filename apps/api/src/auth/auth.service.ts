@@ -6,6 +6,7 @@ import {
   AUTH_TIMINGS,
   PROBLEM_TYPES,
   RESERVED_SLUGS,
+  toSlug,
   type ApiEnv,
   type LoginInput,
   type LoginResponse,
@@ -570,16 +571,9 @@ function tooManyAttempts(retryAfter: number): ProblemException {
   );
 }
 
-/** "Constructora Kairós S.A." → "constructora-kairos-s-a" */
+/** Slug de la empresa: el de `toSlug`, con sufijo si es muy corto o una ruta reservada. */
 export function slugify(value: string): string {
-  const slug = value
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 50)
-    .replace(/-+$/g, '');
+  const slug = toSlug(value);
   // Demasiado corto, o una ruta del producto (`admin`, `api`, `login`…): una
   // empresa llamada "Admin" no puede quedarse con /admin.
   if (slug.length < 3 || RESERVED_SLUGS.has(slug))

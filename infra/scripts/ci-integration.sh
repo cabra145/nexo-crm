@@ -8,13 +8,19 @@
 #
 #     criptografía → rol de aplicación → migraciones → RLS, triggers e índices
 #     → verificación → seed → aislamiento → alta de empresa → API (sondas y
-#     errores) → worker → autenticación completa → prueba de humo → cierre
-#     ordenado del worker
+#     errores) → worker → autenticación completa → prueba de humo → web en
+#     producción + pruebas de navegador → cierre ordenado del worker
 #
 #  Requisitos previos:
 #     · `pnpm install` y `pnpm build` ya ejecutados (usa los dist/ compilados,
 #       que es lo que se despliega)
 #     · Postgres con pgvector, Redis y Mailpit accesibles
+#     · Chromium de Playwright instalado (`pnpm --filter @nexo/web exec
+#       playwright install chromium`)
+#
+#  La web se compila aquí y no antes: NEXT_PUBLIC_API_URL se incrusta al
+#  compilar y tiene que apuntar a la API de ESTA ejecución. Se compila en
+#  .next-ci para no pisar el .next de un `pnpm dev` que esté en marcha.
 #
 #  Variables obligatorias: DATABASE_URL, DIRECT_DATABASE_URL, REDIS_URL.
 #  Los secretos, si no llegan, se generan para esta ejecución.
@@ -36,7 +42,11 @@ export NODE_ENV="${NODE_ENV:-production}"
 export LOG_LEVEL="${LOG_LEVEL:-info}"
 export API_PORT="${API_PORT:-4000}"
 export WORKER_HEALTH_PORT="${WORKER_HEALTH_PORT:-4100}"
-export APP_URL="${APP_URL:-http://localhost:3000}"
+export WEB_PORT="${WEB_PORT:-3000}"
+# `localhost` y no 127.0.0.1, tanto aquí como en NEXT_PUBLIC_API_URL: la web y
+# la API tienen que ser el mismo «sitio» para que el navegador envíe la cookie
+# de refresco (SameSite=Lax).
+export APP_URL="${APP_URL:-http://localhost:${WEB_PORT}}"
 export SMTP_HOST="${SMTP_HOST:-localhost}"
 export SMTP_PORT="${SMTP_PORT:-1025}"
 export SMTP_FROM="${SMTP_FROM:-Nexo CRM <no-responder@nexo.test>}"
@@ -51,15 +61,18 @@ mkdir -p "$CI_LOG_DIR"
 API_URL="http://127.0.0.1:${API_PORT}/api/v1"
 WORKER_HEALTH_URL="http://127.0.0.1:${WORKER_HEALTH_PORT}/health"
 
+WEB_URL="http://localhost:${WEB_PORT}"
+
 API_PID=""
 WORKER_PID=""
+WEB_PID=""
 
 # --- Utilidades --------------------------------------------------------------
 step() { printf '\n\033[1;36m▸ %s\033[0m\n' "$1"; }
 ok()   { printf '  \033[32m✓\033[0m %s\n' "$1"; }
 fail() {
   printf '  \033[31m✗ %s\033[0m\n' "$1" >&2
-  for log in api worker; do
+  for log in api worker web; do
     if [[ -s "$CI_LOG_DIR/$log.log" ]]; then
       printf '\n--- últimas líneas de %s.log ---\n' "$log" >&2
       tail -n 40 "$CI_LOG_DIR/$log.log" >&2
@@ -71,6 +84,7 @@ fail() {
 cleanup() {
   [[ -n "$API_PID" ]] && kill "$API_PID" 2>/dev/null || true
   [[ -n "$WORKER_PID" ]] && kill "$WORKER_PID" 2>/dev/null || true
+  [[ -n "$WEB_PID" ]] && kill "$WEB_PID" 2>/dev/null || true
   wait 2>/dev/null || true
 }
 trap cleanup EXIT
@@ -140,6 +154,19 @@ grep -qi '^x-powered-by' <<<"$not_found_headers" && fail "la API anuncia X-Power
 grep -qi '^x-content-type-options: nosniff' <<<"$not_found_headers" || fail "faltan las cabeceras de seguridad"
 ok "cabeceras de seguridad presentes, sin X-Powered-By"
 
+# CORS: el navegador pregunta antes de enviar la cabecera anti-CSRF. Si la API
+# no la permite, la web no puede renovar la sesión (y ninguna prueba en Node lo
+# notaría: fetch en Node no aplica CORS).
+preflight=$(curl -s -D - -o /dev/null -X OPTIONS "$API_URL/auth/refresh" \
+  -H "Origin: $(node -p "new URL(process.env.APP_URL).origin")" \
+  -H 'Access-Control-Request-Method: POST' \
+  -H 'Access-Control-Request-Headers: content-type,x-nexo-client')
+grep -qi '^access-control-allow-headers:.*x-nexo-client' <<<"$preflight" \
+  || fail "CORS no permite la cabecera x-nexo-client"
+grep -qi '^access-control-allow-credentials: true' <<<"$preflight" \
+  || fail "CORS no permite credenciales"
+ok "CORS: la web puede enviar la cabecera anti-CSRF y la cookie"
+
 # --- 3 · Worker ---------------------------------------------------------------
 step "Worker"
 node apps/worker/dist/main.js > "$CI_LOG_DIR/worker.log" 2>&1 &
@@ -152,6 +179,38 @@ pnpm --silent --filter @nexo/api auth:e2e || fail "auth:e2e"
 
 step "Prueba de humo del worker"
 pnpm --silent --filter @nexo/worker smoke || fail "prueba de humo"
+# Un reintento idempotente es un caso normal, no un error: no puede dejar
+# errores de Prisma en el log (antes dejaba un «Unique constraint failed»).
+if grep -q 'prisma:error' "$CI_LOG_DIR/worker.log"; then
+  grep -A4 'prisma:error' "$CI_LOG_DIR/worker.log" >&2
+  fail "el worker registró errores de Prisma"
+fi
+ok "sin errores de Prisma en el log del worker"
+
+# --- 4 · Web ------------------------------------------------------------------
+step "Web: build de producción contra la API de esta ejecución"
+# Primero sus paquetes (sistema de diseño, contratos) con turbo; la web, con
+# `next build` directo: turbo filtra las variables no declaradas y
+# NEXT_DIST_DIR no llegaría.
+pnpm --silent turbo run build --filter='@nexo/web^...' --output-logs=errors-only \
+  || fail "build de los paquetes de la web"
+NEXT_DIST_DIR=.next-ci NEXT_PUBLIC_API_URL="http://localhost:${API_PORT}/api/v1" \
+  pnpm --silent --filter @nexo/web exec next build > "$CI_LOG_DIR/web-build.log" 2>&1 \
+  || { tail -n 40 "$CI_LOG_DIR/web-build.log" >&2; fail "next build"; }
+ok "compilada en apps/web/.next-ci"
+
+NEXT_DIST_DIR=.next-ci pnpm --silent --filter @nexo/web exec next start --port "$WEB_PORT" \
+  > "$CI_LOG_DIR/web.log" 2>&1 &
+WEB_PID=$!
+wait_for "$WEB_URL/login" "$WEB_PID" "La web"
+ok "arrancó en $WEB_URL (pid $WEB_PID)"
+
+step "Pruebas de navegador (Playwright · Chromium)"
+WEB_URL="$WEB_URL" MAILPIT_URL="$MAILPIT_URL" \
+  pnpm --silent --filter @nexo/web test:e2e || fail "pruebas de navegador"
+kill "$WEB_PID" 2>/dev/null || true
+wait "$WEB_PID" 2>/dev/null || true
+WEB_PID=""
 
 step "Cierre ordenado del worker"
 kill -TERM "$WORKER_PID"

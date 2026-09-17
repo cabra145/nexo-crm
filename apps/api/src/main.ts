@@ -5,6 +5,7 @@ import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { CLIENT_HEADER } from '@nexo/contracts';
 import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
 import { Logger } from 'nestjs-pino';
@@ -42,7 +43,15 @@ async function bootstrap(): Promise<void> {
     // Las cookies de sesión viajan con las peticiones de la web.
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'Idempotency-Key', 'X-Request-Id'],
+    // CLIENT_HEADER es la defensa CSRF de las rutas con cookie: si no se
+    // permite aquí, el navegador bloquea la petición antes de enviarla.
+    allowedHeaders: [
+      'Content-Type',
+      'Authorization',
+      'Idempotency-Key',
+      'X-Request-Id',
+      CLIENT_HEADER,
+    ],
     exposedHeaders: ['X-Trace-Id', 'RateLimit-Limit', 'RateLimit-Remaining', 'RateLimit-Reset'],
     maxAge: 600,
   });

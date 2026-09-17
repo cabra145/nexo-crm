@@ -6,6 +6,7 @@ node_modules/
 dist/
 build/
 .next/
+.next-ci/
 next-env.d.ts
 out/
 *.tsbuildinfo
@@ -49,3 +50,7 @@ storage/
 
 # logs de la prueba de integración (infra/scripts/ci-integration.sh)
 .ci-logs/
+
+# Playwright
+**/playwright-report/
+**/test-results/

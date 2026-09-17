@@ -1,5 +1,5 @@
 import { type ACTOR_TYPES, type AUDIT_ACTIONS, auditJobSchema, QUEUE_NAMES } from '@nexo/contracts';
-import { type ActorType, type AuditAction, Prisma, prisma } from '@nexo/database';
+import { type ActorType, type AuditAction, type Prisma, prisma } from '@nexo/database';
 import { defineProcessor } from '../lib/processor';
 
 /* --------------------------------------------------------------------------
@@ -23,33 +23,35 @@ export const auditProcessor = defineProcessor({
   tenantOf: (data) => data.tenantId,
 
   async handle(data, { log }) {
-    try {
-      await prisma.auditLog.create({
-        data: {
-          id: data.id,
-          tenantId: data.tenantId,
-          actorUserId: data.actorUserId,
-          actorEmail: data.actorEmail,
-          actorType: data.actorType,
-          action: data.action,
-          resourceType: data.resourceType,
-          resourceId: data.resourceId,
-          resourceLabel: data.resourceLabel,
-          changes: data.changes as Prisma.InputJsonValue | undefined,
-          ip: data.ip,
-          userAgent: data.userAgent,
-          traceId: data.traceId,
-          createdAt: data.occurredAt,
-        },
-      });
-    } catch (error) {
-      // Clave primaria duplicada = esta entrada ya se escribió en un intento
-      // anterior que no llegó a confirmarse. Es un éxito, no un fallo.
-      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-        log.debug({ auditId: data.id }, 'Entrada de auditoría ya registrada; reintento ignorado');
-        return { duplicate: true };
-      }
-      throw error;
+    // INSERT … ON CONFLICT (id) DO NOTHING. El id lo fija quien emite el
+    // evento, así que un reintento del mismo trabajo (un intento anterior que
+    // escribió la fila pero no llegó a confirmarse en BullMQ) no inserta nada:
+    // cero filas = ya estaba registrada. Sin capturar P2002, y sin un error de
+    // clave duplicada en los registros de Postgres y de Prisma por cada
+    // reintento, que es lo normal y no un fallo.
+    const { count } = await prisma.auditLog.createMany({
+      skipDuplicates: true,
+      data: {
+        id: data.id,
+        tenantId: data.tenantId,
+        actorUserId: data.actorUserId,
+        actorEmail: data.actorEmail,
+        actorType: data.actorType,
+        action: data.action,
+        resourceType: data.resourceType,
+        resourceId: data.resourceId,
+        resourceLabel: data.resourceLabel,
+        changes: data.changes as Prisma.InputJsonValue | undefined,
+        ip: data.ip,
+        userAgent: data.userAgent,
+        traceId: data.traceId,
+        createdAt: data.occurredAt,
+      },
+    });
+
+    if (count === 0) {
+      log.debug({ auditId: data.id }, 'Entrada de auditoría ya registrada; reintento ignorado');
+      return { duplicate: true };
     }
 
     log.debug({ action: data.action, resourceType: data.resourceType }, 'Auditoría registrada');

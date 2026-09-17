@@ -1,6 +1,9 @@
 # Generados
 **/dist
 **/.next
+**/.next-ci
+**/playwright-report
+**/test-results
 **/.turbo
 **/coverage
 **/next-env.d.ts
