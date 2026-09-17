@@ -92,6 +92,12 @@ export interface ApiProblem {
   traceId?: string;
   /** Errores por campo, para pintarlos junto a cada input. */
   errors?: Array<{ field: string; message: string }>;
+  /**
+   * Recurso ya existente al que se refiere el problema, cuando hay uno: un
+   * contacto duplicado, por ejemplo. La interfaz lo usa para ofrecer «abrir
+   * el que ya existe» en lugar de dejar al usuario en un callejón.
+   */
+  resourceId?: string;
 }
 
 export const PROBLEM_TYPES = {

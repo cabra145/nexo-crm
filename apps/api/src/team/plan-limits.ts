@@ -3,6 +3,8 @@ import type { TenantTransactionClient } from '@nexo/database';
 export interface PlanLimits {
   /** Usuarios incluidos (activos + invitaciones pendientes). Null = sin límite. */
   maxUsers: number | null;
+  /** Contactos incluidos. Null = sin límite. */
+  maxContacts: number | null;
   customRoles: boolean;
 }
 
@@ -20,19 +22,28 @@ export async function loadPlanLimits(tx: TenantTransactionClient): Promise<PlanL
       plan: {
         select: {
           maxUsers: true,
+          maxContacts: true,
           features: { where: { key: 'custom_roles' }, select: { enabled: true } },
         },
       },
     },
   });
-  if (!subscription) return { maxUsers: null, customRoles: false };
+  if (!subscription) return { maxUsers: null, maxContacts: null, customRoles: false };
 
-  const overrides = (subscription.limitOverrides ?? {}) as { maxUsers?: unknown };
+  const overrides = (subscription.limitOverrides ?? {}) as {
+    maxUsers?: unknown;
+    maxContacts?: unknown;
+  };
   const maxUsers =
     typeof overrides.maxUsers === 'number' ? overrides.maxUsers : subscription.plan.maxUsers;
+  const maxContacts =
+    typeof overrides.maxContacts === 'number'
+      ? overrides.maxContacts
+      : subscription.plan.maxContacts;
 
   return {
     maxUsers: maxUsers < 0 ? null : maxUsers,
+    maxContacts: maxContacts < 0 ? null : maxContacts,
     customRoles: subscription.plan.features.some((f) => f.enabled),
   };
 }
@@ -45,5 +56,10 @@ export async function loadPlanLimits(tx: TenantTransactionClient): Promise<PlanL
  * es de Postgres, por empresa, y se libera solo al terminar la transacción.
  */
 export async function lockTeam(tx: TenantTransactionClient, tenantId: string): Promise<void> {
-  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`nexo:team:${tenantId}`}, 0))`;
+  await lockResource(tx, `nexo:team:${tenantId}`);
+}
+
+/** Bloqueo por recurso dentro de la transacción. Se libera al terminarla. */
+export async function lockResource(tx: TenantTransactionClient, key: string): Promise<void> {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))`;
 }

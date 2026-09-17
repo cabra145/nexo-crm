@@ -2,7 +2,7 @@
 
 import type { SessionResponse } from '@nexo/contracts';
 import { BRAND } from '@nexo/design/brand';
-import { ChevronsUpDown, LogOut, ShieldCheck, Users } from 'lucide-react';
+import { ChevronsUpDown, LogOut, Menu, ShieldCheck, Users } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
@@ -19,14 +19,31 @@ function initials(name: string): string {
     .join('');
 }
 
-export function AppHeader({ session }: { session: SessionResponse }) {
+export function AppHeader({
+  session,
+  onOpenMenu,
+}: {
+  session: SessionResponse;
+  /** Ausente cuando no hay nada que navegar (2FA vencido). */
+  onOpenMenu?: () => void;
+}) {
   const router = useRouter();
   const { user, activeTenant, memberships } = session;
   const slug = activeTenant.tenantSlug;
 
   return (
     <header className="sticky top-0 z-20 border-b border-border bg-surface/85 backdrop-blur">
-      <div className="mx-auto flex h-14 max-w-5xl items-center gap-3 px-6">
+      <div className="flex h-14 items-center gap-3 px-4 sm:px-6">
+        {onOpenMenu ? (
+          <button
+            type="button"
+            onClick={onOpenMenu}
+            aria-label="Abrir el menú"
+            className="-ml-1 grid size-8 place-items-center rounded-md text-fg-muted hover:bg-surface-sunken hover:text-fg md:hidden"
+          >
+            <Menu className="size-5" aria-hidden />
+          </button>
+        ) : null}
         <Link
           href={`/w/${slug}`}
           className="flex items-center gap-2 rounded-md"

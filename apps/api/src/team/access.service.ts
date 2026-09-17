@@ -1,5 +1,5 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import type { AccessView } from '@nexo/contracts';
+import type { AccessView, Permission } from '@nexo/contracts';
 import { prisma, runWithTenantContext } from '@nexo/database';
 import type Redis from 'ioredis';
 import { REDIS } from '../redis/redis.module';
@@ -74,6 +74,70 @@ export class AccessService {
         `No se pudo invalidar la caché de permisos de la empresa ${tenantId}: ${(error as Error).message}`,
       );
     }
+  }
+
+  /**
+   * Usuarios cuyos registros entran en el alcance TEAM de esta membresía: los
+   * miembros activos con el MISMO equipo, él incluido.
+   *
+   * Sin equipo asignado, el alcance «su equipo» se reduce a sus propios
+   * registros: es lo prudente, porque lo contrario abriría toda la empresa.
+   */
+  async teamUserIds(access: ResolvedAccess): Promise<string[]> {
+    if (!access.teamName) return [access.userId];
+
+    const key = `nexo:access:team:${access.tenantId}:`;
+    let cacheKey: string | null = null;
+    try {
+      const generation = (await this.redis.get(this.generationKey(access.tenantId))) ?? '0';
+      cacheKey = `${key}${generation}:${access.teamName}`;
+      const cached = await this.redis.get(cacheKey);
+      if (cached) return JSON.parse(cached) as string[];
+    } catch {
+      cacheKey = null;
+    }
+
+    const ids = await runWithTenantContext(
+      { tenantId: access.tenantId, actorType: 'SYSTEM' },
+      async () => {
+        const rows = await prisma.membership.findMany({
+          where: { teamName: access.teamName, status: 'ACTIVE' },
+          select: { userId: true },
+        });
+        return rows.map((r) => r.userId);
+      },
+    );
+    const result = ids.includes(access.userId) ? ids : [...ids, access.userId];
+
+    if (cacheKey) {
+      await this.redis
+        .set(cacheKey, JSON.stringify(result), 'EX', CACHE_SECONDS)
+        .catch(() => undefined);
+    }
+    return result;
+  }
+
+  /**
+   * Filtro de filas que corresponde al alcance del permiso, para añadir al
+   * `where` de una consulta.
+   *
+   * `null` significa sin restricción (alcance de toda la empresa). El permiso
+   * en sí ya lo comprobó el guard: esto decide QUÉ filas, no si puede.
+   *
+   * Los registros SIN responsable sólo los ve quien tiene alcance de empresa:
+   * un agente no debe encontrarse contactos que nadie le asignó.
+   */
+  async rowFilter(
+    access: ResolvedAccess,
+    permission: Permission,
+    ownerField = 'ownerId',
+  ): Promise<Record<string, unknown> | null> {
+    const scope = access.permissions[permission];
+    if (scope === 'ALL') return null;
+    if (scope === 'TEAM') return { [ownerField]: { in: await this.teamUserIds(access) } };
+    // OWN, y también el caso imposible de un permiso ausente: lo más
+    // restrictivo que existe.
+    return { [ownerField]: access.userId };
   }
 
   private load(tenantId: string, membershipId: string): Promise<ResolvedAccess | null> {

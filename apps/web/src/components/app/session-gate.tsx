@@ -8,6 +8,7 @@ import { authApi } from '@/lib/auth/api';
 import { applySession, refreshSession } from '@/lib/auth/session';
 import { useSessionStore } from '@/lib/auth/session-store';
 import { AppHeader } from './app-header';
+import { AppSidebar } from './app-sidebar';
 import { TwoFactorBanner, TwoFactorBlocked } from './two-factor-notices';
 
 /**
@@ -29,6 +30,7 @@ export function SessionGate({ slug, children }: { slug: string; children: ReactN
   const switching = useRef(false);
   // La API no respondió (caída, red): se dice, en vez de cargar para siempre.
   const [unreachable, setUnreachable] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
 
   const bootstrap = useCallback(() => {
     setUnreachable(false);
@@ -93,18 +95,23 @@ export function SessionGate({ slug, children }: { slug: string; children: ReactN
 
   const onSecurityPage = pathname.endsWith('/ajustes/seguridad');
   const { twoFactor } = session;
+  // Con el plazo del 2FA vencido no hay producto que navegar: sólo Seguridad.
+  const blocked = twoFactor.blocked && !onSecurityPage;
 
   return (
     <div className="flex min-h-dvh flex-col">
-      <AppHeader session={session} />
-      {twoFactor.blocked && !onSecurityPage ? (
+      <AppHeader session={session} onOpenMenu={blocked ? undefined : () => setMenuOpen(true)} />
+      {blocked ? (
         <TwoFactorBlocked slug={slug} />
       ) : (
         <>
           {twoFactor.required && !twoFactor.enabled && !onSecurityPage ? (
             <TwoFactorBanner slug={slug} deadline={twoFactor.deadline} />
           ) : null}
-          <main className="min-w-0 flex-1">{children}</main>
+          <div className="flex min-h-0 flex-1">
+            <AppSidebar slug={slug} open={menuOpen} onClose={() => setMenuOpen(false)} />
+            <main className="min-w-0 flex-1">{children}</main>
+          </div>
         </>
       )}
     </div>

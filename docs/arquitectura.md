@@ -216,6 +216,25 @@ caché o el bloqueo de plazas desactivados a propósito, `rbac:e2e` falla en las
 comprobaciones correspondientes (con 4 invitaciones simultáneas la carrera no
 se reproducía; con 12, sí).
 
+### CRM: contactos y empresas — bloque 1.4a
+
+| Decisión                                                               | Por qué                                                                                                                                                                                                                                                                                                                 |
+| ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **El alcance se resuelve en el servicio, no en el controlador**        | `AccessService.rowFilter(access, permiso)` devuelve el fragmento de `where` que corresponde al rol: nada (empresa), su equipo o sólo los suyos. Se aplica en listar, buscar, ver, editar y borrar; fuera de alcance se responde 404, no 403, porque «existe pero no es tuyo» ya es información                          |
+| **Los registros sin responsable sólo los ve quien ve todo**            | Un agente no debe encontrarse contactos que nadie le asignó. El filtro «sin responsable» existe para quien reparte el trabajo                                                                                                                                                                                           |
+| **Equipo vacío = sólo lo suyo**                                        | Un responsable sin equipo asignado no ve toda la empresa; lo contrario abriría datos por un campo en blanco                                                                                                                                                                                                             |
+| **Unicidad de correo y teléfono en la base, no en el código**          | Índices únicos parciales por empresa que ignoran los borrados. Dos altas simultáneas del mismo correo no pueden colarse, y borrar un contacto libera su correo                                                                                                                                                          |
+| **El conflicto se explica con nombre y enlace**                        | El 409 lleva `resourceId` del contacto que ya tiene ese correo, y la web ofrece abrirlo. La consulta va FUERA de la transacción: tras un choque de restricción, Postgres la aborta (era un 500 disfrazado de conflicto)                                                                                                 |
+| **Búsqueda: texto completo + trigram sin acentos**                     | El tsvector en español encuentra palabras completas («perez» → «Pérez»); el trigram sobre `nexo_unaccent(full_name)` encuentra trozos («erez») y los últimos dígitos de un teléfono, que es como la gente busca. `unaccent` no es IMMUTABLE, así que se indexa a través de un envoltorio propio que fija el diccionario |
+| **Borrado lógico**                                                     | Nada se pierde por un clic. Al eliminar una empresa, sus contactos NO se borran: se desvinculan conservando el nombre como texto                                                                                                                                                                                        |
+| **Cuota de contactos con bloqueo por empresa**                         | Igual que las plazas de usuarios: `crm:e2e` lanza 8 altas simultáneas con 2 huecos y exige que entren exactamente 2                                                                                                                                                                                                     |
+| **El consumo del plan sólo se muestra a quien ve todos los contactos** | A un agente, «3 de 5000» le diría de más y le explicaría de menos                                                                                                                                                                                                                                                       |
+
+**Pruebas que se han visto fallar.** Con el filtro de alcance desactivado a
+propósito, `crm:e2e` falla en cuatro comprobaciones: el agente veía los cuatro
+contactos de la empresa, abría y editaba fichas ajenas, el responsable veía
+otros equipos y la búsqueda devolvía de más.
+
 ### El particionado de `message` queda aplazado
 
 El plan lo daba por hecho desde el inicio. Prisma no puede crear una tabla

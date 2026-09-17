@@ -51,17 +51,34 @@ CREATE TRIGGER contact_sync_derived_trg
 CREATE INDEX IF NOT EXISTS contact_search_idx
   ON public.contact USING gin (search_vector);
 
--- Coincidencia parcial en cualquier posición: buscar "erez" encuentra "Pérez".
--- El tsvector no puede hacer esto; trigram sí.
-CREATE INDEX IF NOT EXISTS contact_name_trgm_idx
-  ON public.contact USING gin (full_name gin_trgm_ops);
+-- Coincidencia parcial en cualquier posición, SIN acentos: quien busca
+-- "erez" o "jose" espera encontrar "Pérez" y "José". El tsvector en español
+-- ya normaliza palabras completas, pero no trozos; esto sí.
+--
+-- `unaccent()` no es IMMUTABLE (depende del diccionario que se le pase), y sin
+-- eso no se puede indexar. Fijando el diccionario en un envoltorio propio, la
+-- función pasa a ser determinista y el índice es válido.
+CREATE EXTENSION IF NOT EXISTS unaccent;
+
+CREATE OR REPLACE FUNCTION nexo_unaccent(texto text)
+RETURNS text
+LANGUAGE sql
+IMMUTABLE STRICT PARALLEL SAFE
+AS $$ SELECT public.unaccent('public.unaccent'::regdictionary, texto) $$;
+
+-- El índice anterior indexaba full_name tal cual; el nombre cambia para que
+-- las bases ya creadas se queden con el nuevo y no con los dos.
+DROP INDEX IF EXISTS contact_name_trgm_idx;
+CREATE INDEX IF NOT EXISTS contact_name_unaccent_trgm_idx
+  ON public.contact USING gin (nexo_unaccent(full_name) gin_trgm_ops);
 
 -- Buscar por los últimos dígitos de un teléfono, que es como la gente busca.
 CREATE INDEX IF NOT EXISTS contact_phone_trgm_idx
   ON public.contact USING gin (phone_e164 gin_trgm_ops);
 
-CREATE INDEX IF NOT EXISTS company_name_trgm_idx
-  ON public.company USING gin (name gin_trgm_ops);
+DROP INDEX IF EXISTS company_name_trgm_idx;
+CREATE INDEX IF NOT EXISTS company_name_unaccent_trgm_idx
+  ON public.company USING gin (nexo_unaccent(name) gin_trgm_ops);
 
 -- ============================================================================
 --  2 · CAMPOS PERSONALIZADOS · índices sobre jsonb
