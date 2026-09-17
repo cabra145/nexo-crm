@@ -142,6 +142,8 @@ export class SessionService {
     req: Request;
     tenantId?: string;
     tenantSlug?: string;
+    /** Empresa preferida si sigue disponible; si no, la habitual. No falla. */
+    preferredTenantId?: string;
     familyId?: string;
   }): Promise<{ session: SessionResponse; refreshToken: string }> {
     const { user } = params;
@@ -173,7 +175,10 @@ export class SessionService {
         });
       }
     } else {
-      active = memberships.find((m) => m.tenantId === lastTenantId) ?? memberships[0]!;
+      active =
+        memberships.find((m) => m.tenantId === params.preferredTenantId) ??
+        memberships.find((m) => m.tenantId === lastTenantId) ??
+        memberships[0]!;
     }
 
     const familyId = params.familyId ?? randomUUID();
@@ -368,10 +373,13 @@ export class SessionService {
       );
     }
 
+    // Al renovar se sigue en la empresa de la sesión; si el usuario ya no
+    // pertenece a ella (lo dieron de baja), en otra suya en vez de cerrarle la
+    // sesión. El cambio EXPLÍCITO de empresa sí falla si no es miembro.
     return this.issue({
       user: existing.user,
       req,
-      tenantId: tenantId ?? existing.tenantId ?? undefined,
+      ...(tenantId ? { tenantId } : { preferredTenantId: existing.tenantId ?? undefined }),
       familyId: existing.familyId,
     });
   }

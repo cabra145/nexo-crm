@@ -10,7 +10,8 @@
     "clean": "rm -rf dist node_modules .turbo",
     "lint": "eslint . --max-warnings=0",
     "crypto:selftest": "tsx scripts/crypto-selftest.ts",
-    "auth:e2e": "tsx scripts/auth-e2e.ts"
+    "auth:e2e": "tsx scripts/auth-e2e.ts",
+    "rbac:e2e": "tsx scripts/rbac-e2e.ts"
   },
   "dependencies": {
     "@nestjs/common": "11.2.5",

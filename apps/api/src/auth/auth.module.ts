@@ -4,6 +4,7 @@ import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { CsrfGuard } from './csrf.guard';
 import { EmailTokensService } from './email-tokens.service';
+import { InvitationAcceptanceService } from './invitation-acceptance.service';
 import { AccessTokenGuard } from './guards/access-token.guard';
 import { RateLimiterService } from './rate-limiter.service';
 import { SessionService } from './session.service';
@@ -21,11 +22,20 @@ import { TwoFactorService } from './two-factor.service';
     SessionService,
     TwoFactorService,
     EmailTokensService,
+    InvitationAcceptanceService,
     RateLimiterService,
     CsrfGuard,
     AccessTokenGuard,
     TenantContextInterceptor,
   ],
-  exports: [SessionService, AccessTokenGuard, TenantContextInterceptor],
+  exports: [
+    SessionService,
+    TwoFactorService,
+    EmailTokensService,
+    InvitationAcceptanceService,
+    RateLimiterService,
+    AccessTokenGuard,
+    TenantContextInterceptor,
+  ],
 })
 export class AuthModule {}

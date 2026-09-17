@@ -131,3 +131,28 @@ export function twoFactorChangedEmail(p: { name: string; enabled: boolean }): Re
     }),
   };
 }
+
+export function invitationEmail(p: {
+  inviterName: string | null;
+  tenantName: string;
+  roleName: string;
+  url: string;
+  days: number;
+  accountExists: boolean;
+}): RenderedMail {
+  const who = p.inviterName ? `${p.inviterName} te invita` : 'Te invitan';
+  const how = p.accountExists
+    ? 'Entra con tu cuenta de siempre para aceptar.'
+    : 'Solo tienes que elegir una contraseña.';
+  return {
+    subject: `${who} a ${p.tenantName} en ${BRAND.fullName}`,
+    text: `Hola:\n\n${who} a unirte a ${p.tenantName} en ${BRAND.fullName} como ${p.roleName}. ${how}\n\nAcepta la invitación aquí:\n${p.url}\n\nEl enlace caduca en ${p.days} días. Si no esperabas esta invitación, ignora este mensaje.`,
+    html: layout({
+      preheader: `${who} a ${p.tenantName}.`,
+      heading: `Únete a ${p.tenantName}`,
+      body: `${escape(who)} a unirte a <strong>${escape(p.tenantName)}</strong> en ${escape(BRAND.fullName)} como <strong>${escape(p.roleName)}</strong>. ${escape(how)}`,
+      cta: { label: 'Aceptar la invitación', url: p.url },
+      footnote: `El enlace caduca en ${p.days} días. Si no esperabas esta invitación, ignora este mensaje: no se creará nada.`,
+    }),
+  };
+}

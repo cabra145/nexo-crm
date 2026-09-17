@@ -123,21 +123,42 @@ export class TwoFactorService {
     code: string,
     req: Request,
   ): Promise<void> {
+    const user = await this.verifyStepUp(auth.sub, password, code);
+
+    await this.db.platform.$transaction([
+      this.db.platform.totpSecret.delete({ where: { userId: user.id } }),
+      this.db.platform.user.update({
+        where: { id: user.id },
+        data: { totpEnabled: false, recoveryCodes: [] },
+      }),
+    ]);
+
+    await this.notify(user.email, user.name, false, auth, req);
+  }
+
+  /**
+   * Confirmación reforzada para acciones sensibles: contraseña Y código del
+   * autenticador del usuario de la sesión. Con sólo uno de los dos, quien
+   * tenga una sesión abierta ajena podría quitar la protección de la cuenta o
+   * transferir la empresa.
+   *
+   * Exige 2FA activo: sin autenticador no hay segundo factor que pedir.
+   */
+  async verifyStepUp(userId: string, password: string, code: string) {
     const user = await this.db.platform.user.findUniqueOrThrow({
-      where: { id: auth.sub },
+      where: { id: userId },
       include: { totp: true },
     });
     if (!user.totpEnabled || !user.totp) {
       throw new ProblemException({
         type: PROBLEM_TYPES.CONFLICT,
-        title: 'No está activada',
+        title: 'La verificación en dos pasos no está activada',
         status: HttpStatus.CONFLICT,
+        detail: 'Actívala en Seguridad antes de hacer esto.',
       });
     }
 
     await this.assertAttempts(user.id);
-    // Contraseña Y código: con sólo uno de los dos, quien tenga una sesión
-    // abierta ajena podría quitar la protección de la cuenta.
     const passwordOk = user.passwordHash
       ? await verifyPassword(password, user.passwordHash)
       : false;
@@ -149,16 +170,7 @@ export class TwoFactorService {
     ) {
       throw invalidCode('La contraseña o el código no son correctos.');
     }
-
-    await this.db.platform.$transaction([
-      this.db.platform.totpSecret.delete({ where: { userId: user.id } }),
-      this.db.platform.user.update({
-        where: { id: user.id },
-        data: { totpEnabled: false, recoveryCodes: [] },
-      }),
-    ]);
-
-    await this.notify(user.email, user.name, false, auth, req);
+    return user;
   }
 
   private async assertAttempts(userId: string): Promise<void> {

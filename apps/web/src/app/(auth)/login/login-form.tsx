@@ -1,6 +1,6 @@
 'use client';
 
-import { AUTH_PROBLEMS, loginSchema, type SessionResponse } from '@nexo/contracts';
+import { AUTH_PROBLEMS, loginSchema, type SessionResponse, TEAM_PROBLEMS } from '@nexo/contracts';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { type FormEvent, useEffect, useState } from 'react';
@@ -15,6 +15,7 @@ import { Input } from '@/components/ui/input';
 import { ApiError } from '@/lib/api/client';
 import { authApi, safeNext } from '@/lib/auth/api';
 import { applySession, refreshSession } from '@/lib/auth/session';
+import { invitationStorage } from '@/lib/team/invitation-storage';
 
 type Step = { kind: 'credentials' } | { kind: 'two-factor'; challengeToken: string };
 
@@ -31,8 +32,13 @@ export function LoginForm() {
   const [error, setError] = useState<unknown>(null);
   const [pending, setPending] = useState(false);
   const [resent, setResent] = useState(false);
+  // Inicio de sesión para aceptar una invitación (viene de /invitacion).
+  const [invitationToken, setInvitationToken] = useState(() =>
+    params.get('invitacion') ? invitationStorage.get() : null,
+  );
 
   const enter = (session: SessionResponse) => {
+    invitationStorage.clear();
     applySession(session);
     router.replace(safeNext(params.get('next'), `/w/${session.activeTenant.tenantSlug}`));
   };
@@ -57,6 +63,7 @@ export function LoginForm() {
       email,
       password,
       tenantSlug: params.get('empresa') ?? undefined,
+      invitationToken: invitationToken ?? undefined,
     });
     if (!parsed.success) return;
 
@@ -71,6 +78,16 @@ export function LoginForm() {
         enter(result);
       }
     } catch (err) {
+      // La invitación ya no vale (o es de otra cuenta): se sigue sin ella, y
+      // el error lo explica.
+      if (
+        err instanceof ApiError &&
+        (err.problem.type === AUTH_PROBLEMS.TOKEN_INVALID ||
+          err.problem.type === TEAM_PROBLEMS.INVITATION_EMAIL_MISMATCH)
+      ) {
+        invitationStorage.clear();
+        setInvitationToken(null);
+      }
       setError(err);
     } finally {
       setPending(false);
@@ -166,7 +183,11 @@ export function LoginForm() {
   return (
     <AuthShell
       title="Inicia sesión"
-      description="Entra en el espacio de trabajo de tu empresa."
+      description={
+        invitationToken
+          ? 'Entra con tu cuenta para aceptar la invitación.'
+          : 'Entra en el espacio de trabajo de tu empresa.'
+      }
       footer={
         <>
           ¿Todavía no tienes cuenta?{' '}

@@ -185,6 +185,37 @@ filas = ya registrada. El CI falla si el log del worker contiene `prisma:error`.
 tienen que ser el mismo _sitio_ para que el navegador envíe la cookie
 `SameSite=Lax`.
 
+### Equipo, roles y permisos — bloque 1.3
+
+| Decisión                                                     | Por qué                                                                                                                                                                                                           |
+| ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Permisos en vivo, no del token**                           | El token dura 15 min. Un guard global lee rol y estado de la membresía en cada petición (caché en Redis por empresa y generación): desactivar, dar de baja o cambiar un rol surte efecto en la siguiente petición |
+| **Invalidación por generación de empresa**                   | Cualquier cambio de miembros o roles incrementa un contador por empresa y todas sus entradas de caché dejan de usarse; no hay que saber a quién afecta un cambio de rol. Sin Redis, se lee de la base             |
+| **Anti-escalada con `canGrant`**                             | Sólo se asigna, crea, edita o toca un rol cuyos permisos estén todos dentro de los propios, con igual o menor alcance. La regla vive en `@nexo/contracts`: la web la usa para no ofrecer lo que la API rechazaría |
+| **Propietario único y protegido**                            | No se invita, asigna, degrada, desactiva ni da de baja por la gestión de miembros. Sólo cambia con la transferencia, que pide contraseña + código del propietario y que el nuevo tenga 2FA                        |
+| **Invitan Propietario y Administrador**                      | `member:invite`; los responsables no invitan                                                                                                                                                                      |
+| **Plazas del plan**                                          | Activos + invitaciones pendientes (los desactivados no cuentan). Se comprueban con `pg_advisory_xact_lock` por empresa: `rbac:e2e` lanza 12 invitaciones simultáneas con 2 plazas libres y exige exactamente 2    |
+| **Roles personalizados según plan**                          | `plan_feature.custom_roles` (Pro, Business). El alcance sólo se guarda en permisos sobre datos con dueño; en el resto se normaliza a toda la empresa                                                              |
+| **Invitación = membresía `INVITED` + enlace de un solo uso** | Sin tabla nueva: `email_token` con la empresa y la membresía en `payload`, índice parcial para buscarlas. Reenviar invalida el enlace anterior; cancelar, también                                                 |
+
+**Aceptar una invitación, tres caminos.** Cuenta nueva: elige nombre y
+contraseña en `/invitacion` y entra (el enlace verifica el correo). Sesión
+abierta de la cuenta invitada: un botón. Cuenta existente sin sesión: inicia
+sesión con el token de la invitación, que se canjea al completar el login
+(también con 2FA). Así funciona aunque no pertenezca a ninguna otra empresa, en
+cuyo caso no podría iniciar sesión para aceptarla después. Con una cuenta
+existente, el enlace solo no basta: hace falta su contraseña.
+
+**Quien pierde una empresa no pierde la sesión.** Al renovar, si la empresa de
+la sesión ya no está disponible, se continúa en otra suya; el cambio explícito
+de empresa sí falla. La web no repite la petición rechazada con el token nuevo:
+iría contra otra empresa.
+
+**Pruebas que se han visto fallar.** Con la anti-escalada, la invalidación de
+caché o el bloqueo de plazas desactivados a propósito, `rbac:e2e` falla en las
+comprobaciones correspondientes (con 4 invitaciones simultáneas la carrera no
+se reproducía; con 12, sí).
+
 ### El particionado de `message` queda aplazado
 
 El plan lo daba por hecho desde el inicio. Prisma no puede crear una tabla

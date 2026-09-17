@@ -8,7 +8,8 @@
 #
 #     criptografía → rol de aplicación → migraciones → RLS, triggers e índices
 #     → verificación → seed → aislamiento → alta de empresa → API (sondas y
-#     errores) → worker → autenticación completa → prueba de humo → web en
+#     errores) → worker → autenticación completa → equipo y permisos → prueba
+#     de humo → web en
 #     producción + pruebas de navegador → cierre ordenado del worker
 #
 #  Requisitos previos:
@@ -176,6 +177,9 @@ ok "arrancó y su sonda responde (pid $WORKER_PID)"
 
 step "Autenticación de extremo a extremo (incluidos ataques)"
 pnpm --silent --filter @nexo/api auth:e2e || fail "auth:e2e"
+
+step "Equipo y permisos de extremo a extremo (incluidas escaladas)"
+pnpm --silent --filter @nexo/api rbac:e2e || fail "rbac:e2e"
 
 step "Prueba de humo del worker"
 pnpm --silent --filter @nexo/worker smoke || fail "prueba de humo"

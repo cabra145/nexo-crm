@@ -27,6 +27,7 @@ import {
 } from '@nexo/contracts';
 import type { Request, Response } from 'express';
 import type { z } from 'zod';
+import { SkipMembershipCheck } from '../team/access.decorators';
 import { ZodValidationPipe } from '../common/pipes/zod-validation.pipe';
 import { DatabaseService } from '../database/database.service';
 import { AuthService, SilentlyIgnored } from './auth.service';
@@ -53,6 +54,9 @@ async function acceptedRegardless(work: () => Promise<void>): Promise<typeof ACC
 }
 
 @ApiTags('Autenticación')
+// Todas estas rutas actúan sobre el USUARIO (su sesión, su 2FA, su cambio de
+// empresa), no sobre la empresa del token: no exigen seguir siendo miembro.
+@SkipMembershipCheck()
 @Controller('auth')
 export class AuthController {
   constructor(

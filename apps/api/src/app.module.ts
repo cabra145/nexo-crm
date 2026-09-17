@@ -13,6 +13,8 @@ import { DatabaseModule } from './database/database.module';
 import { HealthModule } from './health/health.module';
 import { QueuesModule } from './queues/queues.module';
 import { RedisModule } from './redis/redis.module';
+import { PermissionGuard } from './team/permission.guard';
+import { TeamModule } from './team/team.module';
 import { TenantsModule } from './tenants/tenants.module';
 
 /** Un id de petición entrante sólo se acepta si tiene forma razonable. */
@@ -105,12 +107,15 @@ const INCOMING_TRACE_ID = /^[A-Za-z0-9_-]{8,64}$/;
     QueuesModule,
     HealthModule,
     AuthModule,
+    TeamModule,
     TenantsModule,
   ],
   providers: [
     // Orden: primero el límite de peticiones (barato), después la sesión.
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     { provide: APP_GUARD, useExisting: AccessTokenGuard },
+    // Después de autenticar: membresía activa y permisos, leídos en vivo.
+    { provide: APP_GUARD, useExisting: PermissionGuard },
     { provide: APP_INTERCEPTOR, useExisting: TenantContextInterceptor },
     { provide: APP_FILTER, useClass: ProblemDetailsFilter },
   ],

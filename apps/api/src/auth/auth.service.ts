@@ -30,6 +30,7 @@ import { MailService } from '../queues/mail.service';
 import { bootstrapTenant } from '../tenants/tenant-bootstrap';
 import { EmailTokensService } from './email-tokens.service';
 import { hashPassword, needsRehash, verifyPassword } from './password';
+import { InvitationAcceptanceService } from './invitation-acceptance.service';
 import { RateLimiterService } from './rate-limiter.service';
 import { hashRecoveryCode } from './recovery-codes';
 import { SessionService } from './session.service';
@@ -41,6 +42,8 @@ interface TwoFactorChallengeClaims {
   sub: string;
   jti: string;
   tsl?: string;
+  /** Invitación que se acepta al completar el inicio de sesión. */
+  inv?: string;
 }
 
 /** Límites de intentos. */
@@ -70,6 +73,7 @@ export class AuthService {
     private readonly sessions: SessionService,
     private readonly tokens: EmailTokensService,
     private readonly limiter: RateLimiterService,
+    private readonly invitations: InvitationAcceptanceService,
     private readonly mail: MailService,
     private readonly audit: AuditService,
     private readonly jwt: JwtService,
@@ -91,6 +95,12 @@ export class AuthService {
     await this.assertEmailRateLimit(input.email);
 
     const existing = await this.db.platform.user.findUnique({ where: { email: input.email } });
+    // Cuenta creada por una invitación que todavía no se aceptó: no tiene
+    // contraseña y nadie la ha usado. Registrarse la completa en lugar de
+    // responder «ya tienes cuenta»; la invitación sigue pendiente.
+    if (existing && !existing.passwordHash && !existing.deletedAt) {
+      return this.registerOverInvitedAccount(existing, input, req);
+    }
     if (existing) {
       await this.mail.send(
         existing.email,
@@ -147,6 +157,54 @@ export class AuthService {
     }
 
     await this.sendVerification(user, traceIdOf(req));
+  }
+
+  private async registerOverInvitedAccount(
+    invited: User,
+    input: RegisterInput,
+    req: Request,
+  ): Promise<void> {
+    const passwordHash = await hashPassword(input.password);
+    const plan = await this.db.platform.plan.findFirst({
+      where: { isDefault: true, archivedAt: null },
+    });
+    if (!plan) {
+      throw new Error(
+        'No hay un plan por defecto (plan.is_default). El registro no puede continuar.',
+      );
+    }
+    const claimed = await this.db.platform.user.updateMany({
+      where: { id: invited.id, passwordHash: null },
+      data: { name: input.name, passwordHash },
+    });
+    // Otra petición completó la cuenta entre medias: mismo trato que una
+    // cuenta existente (respuesta idéntica, sin alta).
+    if (claimed.count === 0) return;
+
+    let tenantId: string;
+    try {
+      tenantId = await this.createTenantWithUniqueSlug(input, invited.id, plan);
+    } catch (error) {
+      // Sin empresa no hay registro: la cuenta vuelve a quedar como la dejó
+      // la invitación, para poder aceptarla o registrarse otra vez.
+      await this.db.platform.user
+        .updateMany({ where: { id: invited.id, passwordHash }, data: { passwordHash: null } })
+        .catch(() => undefined);
+      throw error;
+    }
+    await this.audit.record({
+      tenantId,
+      actorUserId: invited.id,
+      actorEmail: invited.email,
+      action: 'CREATE',
+      resourceType: 'Tenant',
+      resourceId: tenantId,
+      resourceLabel: input.companyName,
+      ip: req.ip,
+      userAgent: req.headers['user-agent']?.slice(0, 500),
+      traceId: traceIdOf(req),
+    });
+    await this.sendVerification({ ...invited, name: input.name }, traceIdOf(req));
   }
 
   private async createTenantWithUniqueSlug(
@@ -316,6 +374,12 @@ export class AuthService {
       });
     }
 
+    // Inicio de sesión para aceptar una invitación: se comprueba ya, con la
+    // contraseña verificada, para no pedir el segundo factor en balde.
+    if (input.invitationToken) {
+      await this.invitations.assertAcceptableBy(user.id, input.invitationToken);
+    }
+
     if (user.totpEnabled) {
       const challengeToken = await this.jwt.signAsync(
         {
@@ -323,6 +387,7 @@ export class AuthService {
           sub: user.id,
           jti: randomUUID(),
           tsl: input.tenantSlug,
+          inv: input.invitationToken,
         } satisfies TwoFactorChallengeClaims,
         {
           secret: this.env.JWT_REFRESH_SECRET,
@@ -339,7 +404,7 @@ export class AuthService {
       };
     }
 
-    return this.completeLogin(user, req, input.tenantSlug);
+    return this.completeLogin(user, req, input.tenantSlug, input.invitationToken);
   }
 
   /** Segundo paso: código del autenticador o código de recuperación. */
@@ -416,7 +481,7 @@ export class AuthService {
       throw invalidTwoFactor();
     }
 
-    const { response, refreshToken } = await this.completeLogin(user, req, claims.tsl);
+    const { response, refreshToken } = await this.completeLogin(user, req, claims.tsl, claims.inv);
     return { response: response as SessionResponse, refreshToken: refreshToken! };
   }
 
@@ -424,8 +489,15 @@ export class AuthService {
     user: User,
     req: Request,
     tenantSlug?: string,
+    invitationToken?: string,
   ): Promise<{ response: LoginResponse; refreshToken?: string }> {
-    const { session, refreshToken } = await this.sessions.issue({ user, req, tenantSlug });
+    // Con invitación, se entra directamente en la empresa que invita.
+    const accepted = invitationToken
+      ? await this.invitations.acceptBy(user.id, invitationToken, req)
+      : null;
+    const { session, refreshToken } = await this.sessions.issue(
+      accepted ? { user, req, tenantId: accepted.tenantId } : { user, req, tenantSlug },
+    );
 
     await this.db.platform.user.update({
       where: { id: user.id },

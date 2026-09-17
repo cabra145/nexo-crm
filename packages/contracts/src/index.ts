@@ -11,3 +11,4 @@ export * from './env';
 export * from './queues';
 export * from './brand';
 export * from './auth';
+export * from './team';

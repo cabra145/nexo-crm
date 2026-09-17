@@ -368,3 +368,14 @@ CREATE STATISTICS IF NOT EXISTS message_conv_stats (dependencies)
 ANALYZE public.contact;
 ANALYZE public.deal;
 ANALYZE public.message;
+
+-- ============================================================================
+--  12 · Invitaciones pendientes
+-- ----------------------------------------------------------------------------
+--  Los enlaces de invitación se buscan por la membresía que invitan (reenviar,
+--  cancelar, mostrar cuándo caducan), que vive en el jsonb `payload`. Índice
+--  parcial: sólo las invitaciones sin usar, que son las que se consultan.
+-- ============================================================================
+CREATE INDEX IF NOT EXISTS email_token_pending_invitation_idx
+  ON public.email_token ((payload->>'membershipId'))
+  WHERE purpose = 'INVITATION' AND used_at IS NULL;

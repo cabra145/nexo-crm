@@ -76,6 +76,8 @@ export const loginSchema = z.object({
   password: z.string().min(1, 'escribe tu contraseña').max(128),
   /** Empresa en la que entrar, si el usuario pertenece a varias. */
   tenantSlug: z.string().max(63).optional(),
+  /** Invitación que se acepta al entrar (cuentas que ya existían). */
+  invitationToken: z.string().min(32).max(128).optional(),
 });
 export type LoginInput = z.infer<typeof loginSchema>;
 

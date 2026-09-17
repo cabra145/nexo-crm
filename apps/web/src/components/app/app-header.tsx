@@ -2,7 +2,7 @@
 
 import type { SessionResponse } from '@nexo/contracts';
 import { BRAND } from '@nexo/design/brand';
-import { ChevronsUpDown, LogOut, ShieldCheck } from 'lucide-react';
+import { ChevronsUpDown, LogOut, ShieldCheck, Users } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
@@ -121,6 +121,10 @@ function UserMenu({ name, email, slug }: { name: string; email: string; slug: st
             <MenuItem href={`/w/${slug}/ajustes/seguridad`} onSelect={() => setOpen(false)}>
               <ShieldCheck aria-hidden />
               Seguridad
+            </MenuItem>
+            <MenuItem href={`/w/${slug}/ajustes/equipo`} onSelect={() => setOpen(false)}>
+              <Users aria-hidden />
+              Equipo
             </MenuItem>
             <button
               type="button"

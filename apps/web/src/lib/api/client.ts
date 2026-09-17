@@ -2,6 +2,7 @@ import {
   AUTH_PROBLEMS,
   CLIENT_HEADER,
   CLIENT_HEADER_VALUE,
+  TEAM_PROBLEMS,
   type ApiProblem,
 } from '@nexo/contracts';
 import { useSessionStore } from '@/lib/auth/session-store';
@@ -65,7 +66,7 @@ export interface RequestOptions extends Omit<RequestInit, 'body'> {
   sessionCookie?: boolean;
 }
 
-type Refresher = () => Promise<string | null>;
+type Refresher = (options: { force: boolean }) => Promise<string | null>;
 let refresher: Refresher | null = null;
 
 /** Lo registra lib/auth/session.ts. Evita una importación circular. */
@@ -129,8 +130,14 @@ export async function apiFetch<T>(path: string, options: RequestOptions = {}): P
   if (response.status === 401 && options.auth && refresher) {
     const problem = await problemFrom(response.clone());
     if (problem.type === AUTH_PROBLEMS.SESSION_EXPIRED) {
-      const renewed = await refresher();
+      const renewed = await refresher({ force: false });
       if (renewed) response = await send(path, options, renewed);
+    } else if (problem.type === TEAM_PROBLEMS.MEMBERSHIP_INACTIVE) {
+      // Ya no pertenece a la empresa del token. Se renueva la sesión (que
+      // caerá en otra empresa suya, o en ninguna) pero la petición NO se
+      // repite: con el token nuevo iría contra OTRA empresa. La puerta del
+      // espacio de trabajo ve el cambio y lleva a donde corresponde.
+      await refresher({ force: true }).catch(() => null);
     }
   }
 

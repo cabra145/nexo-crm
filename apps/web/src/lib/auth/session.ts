@@ -119,4 +119,4 @@ export async function logout(): Promise<void> {
 }
 
 // El cliente de la API renueva la sesión solo cuando recibe un 401.
-setSessionRefresher(async () => (await refreshSession())?.accessToken ?? null);
+setSessionRefresher(async ({ force }) => (await refreshSession({ force }))?.accessToken ?? null);

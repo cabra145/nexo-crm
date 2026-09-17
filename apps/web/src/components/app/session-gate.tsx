@@ -104,7 +104,7 @@ export function SessionGate({ slug, children }: { slug: string; children: ReactN
           {twoFactor.required && !twoFactor.enabled && !onSecurityPage ? (
             <TwoFactorBanner slug={slug} deadline={twoFactor.deadline} />
           ) : null}
-          <main className="flex-1">{children}</main>
+          <main className="min-w-0 flex-1">{children}</main>
         </>
       )}
     </div>
