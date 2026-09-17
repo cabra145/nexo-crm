@@ -133,6 +133,32 @@ migración.
   la base real no interviene, y avisa del SQL que falla sobre tablas con datos
   (`ADD COLUMN … NOT NULL`) o que borra datos.
 
+### Autenticación — bloque 1.2a
+
+| Decisión                                                                      | Por qué                                                                                                                                                         |
+| ----------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Correo verificado antes de entrar**                                         | Decidido para un CRM B2B: evita cuentas con correos ajenos                                                                                                      |
+| **2FA obligatorio para propietarios, con 7 días de plazo**                    | Seguridad real sin fricción en el primer uso. Vencido el plazo, sólo se puede configurar el 2FA                                                                 |
+| **Argon2id nativo de Node**                                                   | Estable en Node 26 (sin marca de estabilidad propia en la documentación de la 26.9). Una dependencia nativa menos en la parte más sensible                      |
+| **TOTP implementado en el proyecto**                                          | Algoritmo corto y completamente especificado. `pnpm --filter @nexo/api crypto:selftest` lo valida contra los vectores oficiales de RFC 4226, 6238 y 4648, en CI |
+| **Access token de 15 min en memoria + refresh rotativo en cookie `httpOnly`** | El token de acceso no está en ningún almacén que un XSS pueda leer; la cookie sólo viaja a `/api/v1/auth`                                                       |
+| **Reuso de refresh = revocar la familia entera**                              | No se puede saber quién tiene la copia legítima: pierden la sesión los dos                                                                                      |
+| **CSRF: cabecera `x-nexo-client` + comprobación de `Origin`**                 | En las rutas que actúan con la cookie                                                                                                                           |
+| **Respuestas idénticas exista o no la cuenta**                                | Registro, reenvío y recuperación. En el login, además, mismo coste de Argon2 con un hash ficticio                                                               |
+
+**Identidad de usuario sin empresa (`app.user_id`).** Al iniciar sesión todavía no
+hay empresa en el contexto, y `membership` tiene RLS por empresa: el usuario no
+podría ver ni sus propias empresas. Se resuelve igual que el alta de empresas,
+sin privilegios: la API fija `app.user_id` sólo tras verificar las credenciales,
+y tres políticas de **sólo lectura** le dejan ver sus membresías, las empresas a
+las que pertenece y sus roles. Nada más: los datos de negocio siguen exigiendo
+`app.tenant_id`.
+
+**Pendiente para el bloque 1.2b:** la web tiene que serializar la renovación de
+la sesión entre pestañas (una sola petición de refresco a la vez). Con la
+detección de reuso estricta, dos pestañas renovando a la vez con la misma
+cookie cerrarían la sesión.
+
 ### El particionado de `message` queda aplazado
 
 El plan lo daba por hecho desde el inicio. Prisma no puede crear una tabla

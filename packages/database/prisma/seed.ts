@@ -368,7 +368,10 @@ async function seedTenant(spec: TenantSpec, planId: string) {
           roleId: required(roleByKey, person.role),
           status: 'ACTIVE',
           teamName: person.team ?? null,
-          acceptedAt: daysAgo(60 - i),
+          // El propietario tiene 7 días para activar el 2FA desde que entra en la
+          // empresa. Con una fecha antigua, la cuenta de propietario del seed
+          // nacería bloqueada; así el plazo empieza al sembrar.
+          acceptedAt: person.role === 'OWNER' ? new Date() : daysAgo(60 - i),
         },
       });
     }

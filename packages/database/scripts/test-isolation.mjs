@@ -111,6 +111,15 @@ async function main() {
     process.exit(1);
   }
 
+  const { rows: people } = await owner.query(
+    `SELECT email, id FROM "user" WHERE email IN ('lucia@acme.test', 'owner@boreal.test')`,
+  );
+  const lucia = people.find((u) => u.email === 'lucia@acme.test')?.id;
+  const borealOwner = people.find((u) => u.email === 'owner@boreal.test')?.id;
+  const acmeMemberships = Number(
+    (await owner.query('SELECT count(*) n FROM membership WHERE tenant_id = $1', [acme])).rows[0].n,
+  );
+
   const expected = {
     acmeContacts: await count(owner, `SELECT count(*) n FROM contact WHERE tenant_id = $1`, [acme]),
     borealContacts: await count(owner, `SELECT count(*) n FROM contact WHERE tenant_id = $1`, [
@@ -257,7 +266,58 @@ async function main() {
   check('contexto vacío → 0 filas', (await count(app, `SELECT count(*) n FROM contact`)) === 0);
   await app.query('ROLLBACK');
 
-  console.log('\n8 · Alta de empresa: sólo la del contexto activo');
+  console.log('\n8 · Identidad de usuario sin empresa: sólo lo suyo, y sólo lectura');
+  {
+    const asUser = async (userId, fn) => {
+      await app.query('BEGIN');
+      try {
+        await app.query(`SELECT set_config('app.user_id', $1, true)`, [userId]);
+        return await fn();
+      } finally {
+        await app.query('ROLLBACK');
+      }
+    };
+
+    await asUser(lucia, async () => {
+      const memberships = await count(app, 'SELECT count(*) n FROM membership');
+      check(
+        `Lucía ve sus membresías (1), no las ${acmeMemberships} de Acme`,
+        memberships === 1,
+        `ve ${memberships}`,
+      );
+      const tenants = await app.query('SELECT slug FROM tenant');
+      check(
+        'Lucía ve sólo las empresas a las que pertenece',
+        tenants.rows.length === 1 && tenants.rows[0].slug === 'acme',
+        tenants.rows.map((r) => r.slug).join(', '),
+      );
+      const roles = await count(app, 'SELECT count(*) n FROM role');
+      check('Lucía ve sólo su propio rol, no los cinco de Acme', roles === 1, `ve ${roles}`);
+      const contacts = await count(app, 'SELECT count(*) n FROM contact');
+      check(
+        'con identidad de usuario pero sin empresa, los contactos siguen ocultos',
+        contacts === 0,
+      );
+
+      await expectRejected(app, 'con identidad de usuario, crear una membresía propia', () =>
+        app.query(
+          `INSERT INTO membership (tenant_id, user_id, role_id, status, updated_at)
+           SELECT m.tenant_id, m.user_id, m.role_id, 'ACTIVE', now() FROM membership m LIMIT 1`,
+        ),
+      );
+    });
+
+    await asUser(borealOwner, async () => {
+      const tenants = await app.query('SELECT slug FROM tenant');
+      check(
+        'el dueño de Boreal ve Boreal y no Acme',
+        tenants.rows.length === 1 && tenants.rows[0].slug === 'boreal',
+        tenants.rows.map((r) => r.slug).join(', '),
+      );
+    });
+  }
+
+  console.log('\n9 · Alta de empresa: sólo la del contexto activo');
   {
     const { rows } = await app.query('SELECT uuid_generate_v7()::text AS id');
     const newId = rows[0].id;
@@ -297,7 +357,7 @@ async function main() {
 
   await app.end();
 
-  console.log('\n9 · La verificación detecta tablas con datos de empresa sin tenant_id');
+  console.log('\n10 · La verificación detecta tablas con datos de empresa sin tenant_id');
   {
     // Se simula el error que tuvo role_permission: una tabla hija que cuelga de
     // una tabla protegida sin tener tenant_id propio. Todo dentro de una

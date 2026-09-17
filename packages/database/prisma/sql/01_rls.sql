@@ -161,6 +161,63 @@ CREATE POLICY tenant_delete ON public.tenant
   FOR DELETE USING (id = current_tenant_id());
 
 -- ----------------------------------------------------------------------------
+--  3b · Lo que un usuario autenticado puede ver de SÍ MISMO, sin empresa activa
+--
+--  Al iniciar sesión todavía no hay empresa en el contexto, pero hay que
+--  saber a cuáles pertenece el usuario para ofrecérselas. Con sólo las
+--  políticas por empresa, `membership` devolvería cero filas y el usuario no
+--  podría ver ni sus propias empresas.
+--
+--  Solución: una segunda identidad en el contexto, `app.user_id`, que la API
+--  fija SÓLO después de verificar la contraseña (y el 2FA). Con ella, y en
+--  modo exclusivamente de LECTURA, el usuario ve:
+--
+--    · sus propias membresías
+--    · las empresas a las que pertenece
+--    · los roles que tiene asignados
+--
+--  Nada más. Contactos, oportunidades y el resto de datos de negocio siguen
+--  exigiendo `app.tenant_id`. Y ninguna de estas políticas permite escribir:
+--  las altas y cambios de membresía se hacen con contexto de empresa.
+--
+--  Las políticas permisivas de Postgres se combinan con OR: estas se SUMAN a
+--  la de empresa, no la sustituyen.
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION current_user_id()
+RETURNS uuid
+LANGUAGE sql
+STABLE
+PARALLEL SAFE
+AS $$
+  SELECT NULLIF(current_setting('app.user_id', true), '')::uuid;
+$$;
+
+COMMENT ON FUNCTION current_user_id() IS
+  'Usuario autenticado en la transacción. NULL si no se fijó: las políticas de lectura propia no dejan pasar nada.';
+
+DROP POLICY IF EXISTS membership_self_select ON public.membership;
+CREATE POLICY membership_self_select ON public.membership
+  FOR SELECT USING (user_id = current_user_id());
+
+DROP POLICY IF EXISTS tenant_member_select ON public.tenant;
+CREATE POLICY tenant_member_select ON public.tenant
+  FOR SELECT USING (
+    EXISTS (
+      SELECT 1 FROM public.membership m
+      WHERE m.tenant_id = tenant.id AND m.user_id = current_user_id()
+    )
+  );
+
+DROP POLICY IF EXISTS role_member_select ON public.role;
+CREATE POLICY role_member_select ON public.role
+  FOR SELECT USING (
+    EXISTS (
+      SELECT 1 FROM public.membership m
+      WHERE m.role_id = role.id AND m.user_id = current_user_id()
+    )
+  );
+
+-- ----------------------------------------------------------------------------
 --  4 · Permisos del rol de aplicación
 --
 --  `nexo_app` puede leer y escribir, pero NO es dueño de las tablas y no tiene

@@ -1,0 +1,604 @@
+/**
+ * Prueba de extremo a extremo de la autenticación, contra la API REAL.
+ *
+ * Recorre el camino normal —registro, correo, verificación, sesión, 2FA,
+ * recuperación— y, sobre todo, los ataques que la autenticación tiene que
+ * resistir: robo de la cookie de refresco, CSRF, fuerza bruta, enumeración de
+ * cuentas, reutilización de códigos y de enlaces.
+ *
+ * Necesita la API y el worker en marcha (los correos los envía el worker),
+ * Mailpit, y el rol dueño de la base para manipular fechas y limpiar.
+ * Crea sus propias cuentas y empresas, y las borra al terminar.
+ *
+ *   pnpm --filter @nexo/api auth:e2e
+ */
+import {
+  AUTH_PROBLEMS,
+  CLIENT_HEADER,
+  CLIENT_HEADER_VALUE,
+  PROBLEM_TYPES,
+  REFRESH_COOKIE,
+} from '@nexo/contracts';
+import { PrismaClient } from '@nexo/database';
+import { base32Decode, currentStep, hotp } from '../src/auth/totp';
+
+const API = process.env.API_URL ?? `http://127.0.0.1:${process.env.API_PORT ?? 4000}/api/v1`;
+const MAILPIT = process.env.MAILPIT_URL ?? 'http://127.0.0.1:8025';
+const APP_ORIGIN = new URL(process.env.APP_URL ?? 'http://localhost:3000').origin;
+
+const run = Date.now().toString(36);
+const owner1 = {
+  email: `e2e-${run}-a@nexo.test`,
+  password: 'Contraseña-Segura-2026',
+  name: 'Ana Prueba',
+  companyName: `Pruebas E2E ${run}`,
+};
+const owner2 = {
+  email: `e2e-${run}-b@nexo.test`,
+  password: 'Otra-Clave-Segura-2026',
+  name: 'Bruno Prueba',
+  companyName: `Plazo 2FA ${run}`,
+};
+
+/* ========================================================================== */
+/*  Utilidades                                                                 */
+/* ========================================================================== */
+
+const results: Array<{ name: string; passed: boolean }> = [];
+function check(name: string, passed: boolean, detail = ''): void {
+  results.push({ name, passed });
+  console.log(`  ${passed ? '✓' : '✗'} ${name}${detail ? `  — ${detail}` : ''}`);
+}
+const section = (title: string) => console.log(`\n${title}`);
+
+interface HttpResult<T = Record<string, unknown>> {
+  status: number;
+  body: T;
+  headers: Headers;
+  refreshCookie: string | null;
+  setCookieRaw: string[];
+}
+
+async function http<T = Record<string, unknown>>(
+  method: string,
+  path: string,
+  opts: {
+    body?: unknown;
+    token?: string;
+    cookie?: string | null;
+    client?: boolean;
+    origin?: string;
+  } = {},
+): Promise<HttpResult<T>> {
+  const headers: Record<string, string> = { Accept: 'application/json' };
+  if (opts.body !== undefined) headers['Content-Type'] = 'application/json';
+  if (opts.token) headers.Authorization = `Bearer ${opts.token}`;
+  if (opts.cookie) headers.Cookie = `${REFRESH_COOKIE}=${opts.cookie}`;
+  if (opts.client) headers[CLIENT_HEADER] = CLIENT_HEADER_VALUE;
+  if (opts.origin) headers.Origin = opts.origin;
+
+  const res = await fetch(`${API}${path}`, {
+    method,
+    headers,
+    body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
+  });
+  const text = await res.text();
+  const setCookieRaw = res.headers.getSetCookie();
+  const match = setCookieRaw
+    .map((c) => new RegExp(`^${REFRESH_COOKIE}=([^;]*)`).exec(c))
+    .find(Boolean);
+  return {
+    status: res.status,
+    body: (text ? JSON.parse(text) : {}) as T,
+    headers: res.headers,
+    refreshCookie: match ? match[1] || null : null,
+    setCookieRaw,
+  };
+}
+
+interface MailpitMessage {
+  ID: string;
+  Subject: string;
+  To: Array<{ Address: string }>;
+  Created: string;
+}
+
+/** Espera un correo para `to` cuyo asunto contenga `subject`, más nuevo que `after`. */
+async function waitForMail(
+  to: string,
+  subject: string,
+  after: number,
+  timeoutMs = 15_000,
+): Promise<string | null> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const res = await fetch(`${MAILPIT}/api/v1/messages?limit=100`);
+    const body = (await res.json()) as { messages?: MailpitMessage[] };
+    const found = body.messages?.find(
+      (m) =>
+        m.To.some((t) => t.Address === to) &&
+        m.Subject.includes(subject) &&
+        new Date(m.Created).getTime() >= after - 2_000,
+    );
+    if (found) {
+      const detail = (await (await fetch(`${MAILPIT}/api/v1/message/${found.ID}`)).json()) as {
+        Text: string;
+      };
+      return detail.Text;
+    }
+    await new Promise((r) => setTimeout(r, 400));
+  }
+  return null;
+}
+
+const tokenFrom = (text: string | null) =>
+  text ? (/token=([A-Za-z0-9_-]+)/.exec(text)?.[1] ?? null) : null;
+
+function totpFor(secret: string, stepOffset = 0): string {
+  return hotp(base32Decode(secret), currentStep() + stepOffset);
+}
+
+const sameProblem = (a: Record<string, unknown>, b: Record<string, unknown>) =>
+  a.type === b.type && a.title === b.title && a.detail === b.detail && a.status === b.status;
+
+/* ========================================================================== */
+
+async function main(): Promise<void> {
+  const db = new PrismaClient({ datasourceUrl: process.env.DIRECT_DATABASE_URL });
+  console.log(`\nAutenticación de extremo a extremo · ejecución ${run}`);
+
+  try {
+    /* ---------------------------------------------------------------------- */
+    section('1 · Registro');
+    const weak = await http('POST', '/auth/register', { body: { ...owner1, password: 'corta' } });
+    check(
+      'una contraseña débil se rechaza con el error en su campo',
+      weak.status === 400 &&
+        (weak.body.errors as Array<{ field: string }> | undefined)?.some(
+          (e) => e.field === 'password',
+        ) === true,
+      `${weak.status}`,
+    );
+
+    const t0 = Date.now();
+    const reg = await http('POST', '/auth/register', { body: owner1 });
+    check('el registro se acepta', reg.status === 202, `${reg.status}`);
+
+    const verifyText = await waitForMail(owner1.email, 'Confirma tu correo', t0);
+    const verifyToken = tokenFrom(verifyText);
+    check('llega el correo de confirmación, con enlace', Boolean(verifyToken));
+
+    const early = await http('POST', '/auth/login', {
+      body: { email: owner1.email, password: owner1.password },
+    });
+    check(
+      'sin confirmar el correo no se puede entrar',
+      early.status === 403 && early.body.type === AUTH_PROBLEMS.EMAIL_NOT_VERIFIED,
+      `${early.status}`,
+    );
+
+    const t1 = Date.now();
+    const dup = await http('POST', '/auth/register', {
+      body: { ...owner1, name: 'Intruso', companyName: 'Otra' },
+    });
+    check(
+      'registrar un correo existente responde EXACTAMENTE igual (no revela la cuenta)',
+      dup.status === reg.status && JSON.stringify(dup.body) === JSON.stringify(reg.body),
+    );
+    check(
+      '…y al dueño le llega un aviso por correo',
+      Boolean(await waitForMail(owner1.email, 'Ya tienes una cuenta', t1)),
+    );
+
+    /* ---------------------------------------------------------------------- */
+    section('2 · Verificación de correo');
+    const bogus = await http('POST', '/auth/verify-email', { body: { token: 'x'.repeat(43) } });
+    check(
+      'un enlace inventado no sirve',
+      bogus.status === 400 && bogus.body.type === AUTH_PROBLEMS.TOKEN_INVALID,
+    );
+    const verified = await http('POST', '/auth/verify-email', { body: { token: verifyToken } });
+    check('el enlace confirma el correo', verified.status === 200, `${verified.status}`);
+    const reused = await http('POST', '/auth/verify-email', { body: { token: verifyToken } });
+    check('el mismo enlace no sirve dos veces', reused.status === 400);
+
+    /* ---------------------------------------------------------------------- */
+    section('3 · Inicio de sesión');
+    const wrongPass = await http('POST', '/auth/login', {
+      body: { email: owner1.email, password: 'Incorrecta-123456' },
+    });
+    const noAccount = await http('POST', '/auth/login', {
+      body: { email: `nadie-${run}@nexo.test`, password: 'Incorrecta-123456' },
+    });
+    check(
+      'contraseña mala → 401',
+      wrongPass.status === 401 && wrongPass.body.type === AUTH_PROBLEMS.INVALID_CREDENTIALS,
+    );
+    check(
+      'correo sin cuenta → la MISMA respuesta que contraseña mala',
+      noAccount.status === 401 && sameProblem(wrongPass.body, noAccount.body),
+    );
+
+    const login = await http<{
+      accessToken: string;
+      activeTenant: { role: string; tenantSlug: string; tenantId: string };
+      twoFactor: { required: boolean; blocked: boolean; deadline: string };
+    }>('POST', '/auth/login', { body: { email: owner1.email, password: owner1.password } });
+    check(
+      'con el correo confirmado, entra',
+      login.status === 200 && Boolean(login.body.accessToken),
+      `${login.status}`,
+    );
+    const cookieAttrs = login.setCookieRaw.find((c) => c.startsWith(`${REFRESH_COOKIE}=`)) ?? '';
+    check(
+      'la cookie de refresco es HttpOnly, SameSite=Lax y sólo para /api/v1/auth',
+      /HttpOnly/i.test(cookieAttrs) &&
+        /SameSite=Lax/i.test(cookieAttrs) &&
+        /Path=\/api\/v1\/auth/i.test(cookieAttrs),
+    );
+    check(
+      'el token de acceso NO va en una cookie',
+      !login.setCookieRaw.some((c) => c.includes(login.body.accessToken)),
+    );
+    const days = (new Date(login.body.twoFactor.deadline).getTime() - Date.now()) / 86_400_000;
+    check(
+      'es propietario, con 2FA obligatorio y 7 días de plazo',
+      login.body.activeTenant.role === 'OWNER' &&
+        login.body.twoFactor.required &&
+        !login.body.twoFactor.blocked &&
+        days > 6.9 &&
+        days <= 7,
+      `${days.toFixed(2)} días`,
+    );
+
+    const access = login.body.accessToken;
+    let cookie = login.refreshCookie;
+    const tenantId = login.body.activeTenant.tenantId;
+
+    const me = await http('GET', '/auth/me', { token: access });
+    const anon = await http('GET', '/auth/me');
+    check('/auth/me con sesión → 200; sin sesión → 401', me.status === 200 && anon.status === 401);
+    const tenant = await http<{ slug: string }>('GET', '/tenant', { token: access });
+    check(
+      'la empresa activa se lee con RLS',
+      tenant.status === 200 && tenant.body.slug === login.body.activeTenant.tenantSlug,
+      tenant.body.slug,
+    );
+
+    const [roles, stages] = await Promise.all([
+      db.role.count({ where: { tenantId } }),
+      db.pipelineStage.count({ where: { tenantId } }),
+    ]);
+    check(
+      'la empresa nace con sus 5 roles y las 7 etapas del embudo',
+      roles === 5 && stages === 7,
+      `${roles} roles, ${stages} etapas`,
+    );
+
+    /* ---------------------------------------------------------------------- */
+    section('4 · Renovación de la sesión y robo de la cookie');
+    const noHeader = await http('POST', '/auth/refresh', { cookie });
+    check('sin la cabecera del cliente web → 403 (CSRF)', noHeader.status === 403);
+    const evil = await http('POST', '/auth/refresh', {
+      cookie,
+      client: true,
+      origin: 'https://sitio-malicioso.example',
+    });
+    check('desde otro origen → 403 (CSRF)', evil.status === 403);
+    const own = await http('POST', '/auth/refresh', { cookie, client: true, origin: APP_ORIGIN });
+    check(
+      'desde la web, con la cabecera → sesión nueva',
+      own.status === 200 && Boolean(own.refreshCookie) && own.refreshCookie !== cookie,
+    );
+
+    const stolen = cookie;
+    cookie = own.refreshCookie;
+    const replay = await http('POST', '/auth/refresh', { cookie: stolen, client: true });
+    check('reusar la cookie anterior (robada) → 401', replay.status === 401);
+    const afterReplay = await http('POST', '/auth/refresh', { cookie, client: true });
+    check(
+      '…y la sesión LEGÍTIMA también queda revocada (familia entera)',
+      afterReplay.status === 401,
+    );
+
+    /* ---------------------------------------------------------------------- */
+    section('5 · Cambio de empresa');
+    const relog = await http<{ accessToken: string }>('POST', '/auth/login', {
+      body: { email: owner1.email, password: owner1.password },
+    });
+    cookie = relog.refreshCookie;
+    const acme = await db.tenant.findUnique({ where: { slug: 'acme' } });
+    const foreign = await http('POST', '/auth/switch-tenant', {
+      token: relog.body.accessToken,
+      cookie,
+      client: true,
+      body: { tenantId: acme?.id },
+    });
+    check(
+      'cambiar a una empresa ajena → 403',
+      foreign.status === 403 && foreign.body.type === AUTH_PROBLEMS.TENANT_UNAVAILABLE,
+    );
+    const stillValid = await http('POST', '/auth/refresh', { cookie, client: true });
+    check('…sin perder la sesión propia por haberlo intentado', stillValid.status === 200);
+    cookie = stillValid.refreshCookie;
+
+    /* ---------------------------------------------------------------------- */
+    section('6 · Verificación en dos pasos');
+    const session = await http<{ accessToken: string }>('POST', '/auth/refresh', {
+      cookie,
+      client: true,
+    });
+    cookie = session.refreshCookie;
+    const setup = await http<{ secret: string; otpauthUrl: string }>('POST', '/auth/2fa/setup', {
+      token: session.body.accessToken,
+    });
+    check(
+      'genera el secreto y la URL para el QR',
+      setup.status === 200 &&
+        setup.body.otpauthUrl.startsWith('otpauth://totp/') &&
+        setup.body.secret.length >= 32,
+    );
+
+    const badEnable = await http('POST', '/auth/2fa/enable', {
+      token: session.body.accessToken,
+      cookie,
+      client: true,
+      body: { code: '000000' },
+    });
+    check('activarlo con un código incorrecto → 401', badEnable.status === 401);
+    const enableCode = totpFor(setup.body.secret);
+    const t2 = Date.now();
+    const enabled = await http<{
+      recoveryCodes: string[];
+      session: { twoFactor: { enabled: boolean } };
+    }>('POST', '/auth/2fa/enable', {
+      token: session.body.accessToken,
+      cookie,
+      client: true,
+      body: { code: enableCode },
+    });
+    check(
+      'con el código correcto se activa y entrega 10 códigos de recuperación',
+      enabled.status === 200 &&
+        enabled.body.recoveryCodes?.length === 10 &&
+        enabled.body.session.twoFactor.enabled,
+      `${enabled.status}`,
+    );
+    const preTwoFactorCookie = cookie;
+    cookie = enabled.refreshCookie;
+    check(
+      'las sesiones abiertas sin 2FA se cierran',
+      (await http('POST', '/auth/refresh', { cookie: preTwoFactorCookie, client: true })).status ===
+        401,
+    );
+    check(
+      'se avisa por correo',
+      Boolean(await waitForMail(owner1.email, 'dos pasos activado', t2)),
+    );
+
+    const step1 = await http<{ requiresTwoFactor: boolean; challengeToken: string }>(
+      'POST',
+      '/auth/login',
+      { body: { email: owner1.email, password: owner1.password } },
+    );
+    check(
+      'ahora la contraseña sola no basta: pide el segundo factor, sin dar sesión',
+      step1.status === 200 && step1.body.requiresTwoFactor === true && !step1.refreshCookie,
+    );
+
+    const replayCode = await http('POST', '/auth/login/2fa', {
+      body: { challengeToken: step1.body.challengeToken, code: enableCode },
+    });
+    check(
+      'el código ya usado para activarlo no sirve otra vez (antirreproducción)',
+      replayCode.status === 401,
+    );
+    const nextCode = totpFor(setup.body.secret, 1);
+    const step2 = await http<{ accessToken: string }>('POST', '/auth/login/2fa', {
+      body: { challengeToken: step1.body.challengeToken, code: nextCode },
+    });
+    check(
+      'con un código válido entra',
+      step2.status === 200 && Boolean(step2.body.accessToken),
+      `${step2.status}`,
+    );
+    const challengeReuse = await http('POST', '/auth/login/2fa', {
+      body: { challengeToken: step1.body.challengeToken, code: totpFor(setup.body.secret, -1) },
+    });
+    check(
+      'el mismo desafío no sirve para un segundo inicio de sesión',
+      challengeReuse.status === 401,
+    );
+
+    const recovery = enabled.body.recoveryCodes[0]!;
+    const c1 = await http<{ challengeToken: string }>('POST', '/auth/login', {
+      body: { email: owner1.email, password: owner1.password },
+    });
+    const withRecovery = await http('POST', '/auth/login/2fa', {
+      body: { challengeToken: c1.body.challengeToken, recoveryCode: recovery },
+    });
+    check(
+      'un código de recuperación permite entrar',
+      withRecovery.status === 200,
+      `${withRecovery.status}`,
+    );
+    const c2 = await http<{ challengeToken: string }>('POST', '/auth/login', {
+      body: { email: owner1.email, password: owner1.password },
+    });
+    const recoveryAgain = await http('POST', '/auth/login/2fa', {
+      body: { challengeToken: c2.body.challengeToken, recoveryCode: recovery },
+    });
+    check('…pero una sola vez', recoveryAgain.status === 401);
+
+    /* ---------------------------------------------------------------------- */
+    section('7 · Plazo del 2FA obligatorio del propietario');
+    const t3 = Date.now();
+    await http('POST', '/auth/register', { body: owner2 });
+    const token2 = tokenFrom(await waitForMail(owner2.email, 'Confirma tu correo', t3));
+    await http('POST', '/auth/verify-email', { body: { token: token2 } });
+    const user2 = await db.user.findUniqueOrThrow({ where: { email: owner2.email } });
+    // Se simula que entró hace 8 días: el plazo de 7 venció.
+    await db.membership.updateMany({
+      where: { userId: user2.id },
+      data: { acceptedAt: new Date(Date.now() - 8 * 86_400_000) },
+    });
+    const late = await http<{ accessToken: string; twoFactor: { blocked: boolean } }>(
+      'POST',
+      '/auth/login',
+      { body: { email: owner2.email, password: owner2.password } },
+    );
+    check(
+      'pasado el plazo, la sesión indica que está bloqueado',
+      late.status === 200 && late.body.twoFactor.blocked,
+    );
+    const blockedRoute = await http('GET', '/tenant', { token: late.body.accessToken });
+    check(
+      '…y el producto responde 403 hasta activar el 2FA',
+      blockedRoute.status === 403 && blockedRoute.body.type === AUTH_PROBLEMS.TWO_FACTOR_REQUIRED,
+    );
+    const allowedRoute = await http('POST', '/auth/2fa/setup', { token: late.body.accessToken });
+    check('…pero puede configurar el 2FA', allowedRoute.status === 200);
+
+    /* ---------------------------------------------------------------------- */
+    section('8 · Recuperación de contraseña');
+    const unknownForgot = await http('POST', '/auth/password/forgot', {
+      body: { email: `nadie-${run}@nexo.test` },
+    });
+    const t4 = Date.now();
+    const knownForgot = await http('POST', '/auth/password/forgot', {
+      body: { email: owner2.email },
+    });
+    check(
+      'pedirla para un correo sin cuenta responde igual que para uno con cuenta',
+      unknownForgot.status === 202 &&
+        JSON.stringify(unknownForgot.body) === JSON.stringify(knownForgot.body),
+    );
+    const resetToken = tokenFrom(await waitForMail(owner2.email, 'Restablece tu contraseña', t4));
+    check('llega el enlace', Boolean(resetToken));
+
+    const cookieBeforeReset = late.refreshCookie;
+    const weakReset = await http('POST', '/auth/password/reset', {
+      body: { token: resetToken, password: 'corta' },
+    });
+    check('no acepta una contraseña débil', weakReset.status === 400);
+    const newPassword = 'Clave-Renovada-2026';
+    const reset = await http('POST', '/auth/password/reset', {
+      body: { token: resetToken, password: newPassword },
+    });
+    check('cambia la contraseña', reset.status === 200, `${reset.status}`);
+    check(
+      'el enlace no sirve dos veces',
+      (
+        await http('POST', '/auth/password/reset', {
+          body: { token: resetToken, password: 'Otra-Clave-2026-x' },
+        })
+      ).status === 400,
+    );
+    check(
+      'la contraseña anterior ya no entra',
+      (
+        await http('POST', '/auth/login', {
+          body: { email: owner2.email, password: owner2.password },
+        })
+      ).status === 401,
+    );
+    check(
+      'la nueva sí',
+      (await http('POST', '/auth/login', { body: { email: owner2.email, password: newPassword } }))
+        .status === 200,
+    );
+    check(
+      'las sesiones anteriores al cambio quedan cerradas',
+      (await http('POST', '/auth/refresh', { cookie: cookieBeforeReset, client: true })).status ===
+        401,
+    );
+
+    /* ---------------------------------------------------------------------- */
+    section('9 · Fuerza bruta');
+    for (let i = 0; i < 5; i++) {
+      await http('POST', '/auth/login', {
+        body: { email: owner2.email, password: `Mala-${i}-1234567` },
+      });
+    }
+    const locked = await http('POST', '/auth/login', {
+      body: { email: owner2.email, password: newPassword },
+    });
+    check(
+      'tras 5 fallos, ni la contraseña correcta entra: 429 con Retry-After',
+      locked.status === 429 &&
+        locked.body.type === PROBLEM_TYPES.RATE_LIMITED &&
+        Number(locked.headers.get('retry-after')) > 0,
+      `${locked.status}, Retry-After ${locked.headers.get('retry-after')}`,
+    );
+
+    /* ---------------------------------------------------------------------- */
+    section('10 · Cierre de sesión');
+    const lo = await http<{ accessToken: string }>('POST', '/auth/login/2fa', {
+      body: {
+        challengeToken: (
+          await http<{ challengeToken: string }>('POST', '/auth/login', {
+            body: { email: owner1.email, password: owner1.password },
+          })
+        ).body.challengeToken,
+        recoveryCode: enabled.body.recoveryCodes[1],
+      },
+    });
+    const logout = await http('POST', '/auth/logout', { cookie: lo.refreshCookie, client: true });
+    check(
+      'cerrar sesión borra la cookie',
+      logout.status === 204 && logout.setCookieRaw.some((c) => c.startsWith(`${REFRESH_COOKIE}=;`)),
+    );
+    check(
+      'esa cookie ya no renueva nada',
+      (await http('POST', '/auth/refresh', { cookie: lo.refreshCookie, client: true })).status ===
+        401,
+    );
+
+    /* ---------------------------------------------------------------------- */
+    section('11 · Auditoría (escrita por el worker)');
+    const wanted = ['CREATE', 'LOGIN', 'TWO_FACTOR_ENABLE'];
+    let actions: string[] = [];
+    for (let i = 0; i < 30 && !wanted.every((a) => actions.includes(a)); i++) {
+      actions = (await db.auditLog.findMany({ where: { tenantId }, select: { action: true } })).map(
+        (a) => a.action,
+      );
+      await new Promise((r) => setTimeout(r, 300));
+    }
+    for (const action of wanted) check(`queda registrado ${action}`, actions.includes(action));
+    const user2Tenant = await db.membership.findFirst({
+      where: { userId: user2.id },
+      select: { tenantId: true },
+    });
+    const pwd = user2Tenant
+      ? await db.auditLog.count({
+          where: { tenantId: user2Tenant.tenantId, action: 'PASSWORD_CHANGE' },
+        })
+      : 0;
+    check('queda registrado PASSWORD_CHANGE', pwd > 0);
+  } finally {
+    // Limpieza: las empresas se borran en cascada con todo lo suyo.
+    const users = await db.user.findMany({
+      where: { email: { in: [owner1.email, owner2.email] } },
+      select: { id: true },
+    });
+    const memberships = await db.membership.findMany({
+      where: { userId: { in: users.map((u) => u.id) } },
+      select: { tenantId: true },
+    });
+    await db.tenant.deleteMany({ where: { id: { in: memberships.map((m) => m.tenantId) } } });
+    await db.user.deleteMany({ where: { id: { in: users.map((u) => u.id) } } });
+    await db.$disconnect();
+  }
+
+  const failed = results.filter((r) => !r.passed).length;
+  console.log(`\n${results.length - failed}/${results.length} comprobaciones superadas`);
+  if (failed) process.exitCode = 1;
+  else console.log('Autenticación verificada de extremo a extremo.\n');
+}
+
+main()
+  .catch((error: unknown) => {
+    console.error('\nLa prueba no pudo completarse:\n', error);
+    process.exitCode = 1;
+  })
+  .finally(() => process.exit(process.exitCode ?? 0));

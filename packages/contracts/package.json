@@ -16,6 +16,14 @@
     "./env": {
       "types": "./dist/env.d.ts",
       "default": "./dist/env.js"
+    },
+    "./brand": {
+      "types": "./dist/brand.d.ts",
+      "default": "./dist/brand.js"
+    },
+    "./auth": {
+      "types": "./dist/auth.d.ts",
+      "default": "./dist/auth.js"
     }
   },
   "scripts": {

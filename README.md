@@ -12,16 +12,16 @@ documentos de IA y su facturación.
 
 ## Estado
 
-| Fase  | Contenido                                                                              | Estado        |
-| ----- | -------------------------------------------------------------------------------------- | ------------- |
-| **0** | Monorepo, esquema de datos, RLS, contratos, infraestructura de desarrollo, ESLint y CI | **Terminada** |
-| 1     | Auth con 2FA, multi-tenant, RBAC, contactos, empresas, embudo Kanban, tareas           | Pendiente     |
-| 2     | WhatsApp Business Cloud API                                                            | Pendiente     |
-| 3     | IA con RAG por empresa                                                                 | Pendiente     |
-| 4     | Motor de automatizaciones visual                                                       | Pendiente     |
-| 5     | Documentos comerciales y suscripciones                                                 | Pendiente     |
-| 6     | Calendario, dashboards, panel de plataforma                                            | Pendiente     |
-| 7     | Endurecimiento y puesta en producción                                                  | Pendiente     |
+| Fase  | Contenido                                                                              | Estado                               |
+| ----- | -------------------------------------------------------------------------------------- | ------------------------------------ |
+| **0** | Monorepo, esquema de datos, RLS, contratos, infraestructura de desarrollo, ESLint y CI | **Terminada**                        |
+| 1     | Auth con 2FA, multi-tenant, RBAC, contactos, empresas, embudo Kanban, tareas           | **En curso** · 1.1 y 1.2a terminados |
+| 2     | WhatsApp Business Cloud API                                                            | Pendiente                            |
+| 3     | IA con RAG por empresa                                                                 | Pendiente                            |
+| 4     | Motor de automatizaciones visual                                                       | Pendiente                            |
+| 5     | Documentos comerciales y suscripciones                                                 | Pendiente                            |
+| 6     | Calendario, dashboards, panel de plataforma                                            | Pendiente                            |
+| 7     | Endurecimiento y puesta en producción                                                  | Pendiente                            |
 
 La arquitectura completa —incluidas las decisiones descartadas y por qué— está
 en [`docs/arquitectura.md`](docs/arquitectura.md).

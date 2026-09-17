@@ -1,14 +1,19 @@
 import { randomUUID } from 'node:crypto';
 import { Module } from '@nestjs/common';
-import { APP_FILTER, APP_GUARD } from '@nestjs/core';
+import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import type { ApiEnv } from '@nexo/contracts';
 import { LoggerModule } from 'nestjs-pino';
+import { AuthModule } from './auth/auth.module';
+import { AccessTokenGuard } from './auth/guards/access-token.guard';
+import { TenantContextInterceptor } from './auth/tenant-context.interceptor';
 import { ProblemDetailsFilter } from './common/filters/problem-details.filter';
 import { API_ENV, ConfigModule } from './config/config.module';
 import { DatabaseModule } from './database/database.module';
 import { HealthModule } from './health/health.module';
+import { QueuesModule } from './queues/queues.module';
 import { RedisModule } from './redis/redis.module';
+import { TenantsModule } from './tenants/tenants.module';
 
 /** Un id de petición entrante sólo se acepta si tiene forma razonable. */
 const INCOMING_TRACE_ID = /^[A-Za-z0-9_-]{8,64}$/;
@@ -97,10 +102,16 @@ const INCOMING_TRACE_ID = /^[A-Za-z0-9_-]{8,64}$/;
 
     DatabaseModule,
     RedisModule,
+    QueuesModule,
     HealthModule,
+    AuthModule,
+    TenantsModule,
   ],
   providers: [
+    // Orden: primero el límite de peticiones (barato), después la sesión.
     { provide: APP_GUARD, useClass: ThrottlerGuard },
+    { provide: APP_GUARD, useExisting: AccessTokenGuard },
+    { provide: APP_INTERCEPTOR, useExisting: TenantContextInterceptor },
     { provide: APP_FILTER, useClass: ProblemDetailsFilter },
   ],
 })

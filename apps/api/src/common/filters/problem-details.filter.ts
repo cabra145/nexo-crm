@@ -9,6 +9,7 @@ import {
 import { PROBLEM_TYPES, type ApiProblem } from '@nexo/contracts';
 import { Prisma } from '@nexo/database';
 import type { Request, Response } from 'express';
+import { ProblemException } from '../problem.exception';
 import { ValidationException } from '../pipes/zod-validation.pipe';
 
 /**
@@ -44,10 +45,21 @@ export class ProblemDetailsFilter implements ExceptionFilter {
 
     if (response.headersSent) return;
 
+    // Cabeceras propias del problema: p. ej. Retry-After en un 429.
+    if (exception instanceof ProblemException) {
+      for (const [name, value] of Object.entries(exception.headers))
+        response.setHeader(name, value);
+    }
+
     response.status(problem.status).type('application/problem+json').json(problem);
   }
 
   private toProblem(exception: unknown): ApiProblem {
+    // --- Problemas con tipo propio (autenticación, límites…) -------------
+    if (exception instanceof ProblemException) {
+      return { ...exception.problem };
+    }
+
     // --- Validación de nuestros esquemas --------------------------------
     if (exception instanceof ValidationException) {
       return {

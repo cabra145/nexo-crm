@@ -303,6 +303,32 @@ export async function runInNewTenantTransaction<T>(
 }
 
 /**
+ * Ejecuta `fn` en una transacción con el USUARIO autenticado como identidad,
+ * sin empresa activa.
+ *
+ * Sirve para lo que ocurre justo después de verificar credenciales y antes de
+ * elegir empresa: listar las membresías del usuario, las empresas a las que
+ * pertenece y sus roles. Las políticas `*_self_select` / `*_member_select` de
+ * prisma/sql/01_rls.sql sólo dejan LEER eso; el resto de datos sigue exigiendo
+ * contexto de empresa.
+ *
+ * `fn` recibe el cliente base (sin la extensión de empresa): aquí no hay
+ * empresa que inyectar.
+ *
+ * NUNCA se debe llamar con un id que no venga de una autenticación ya
+ * verificada: esta identidad es la que abre esas lecturas.
+ */
+export async function runAsAuthenticatedUser<T>(
+  userId: string,
+  fn: (tx: Prisma.TransactionClient) => Promise<T>,
+): Promise<T> {
+  return platformPrisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT set_config('app.user_id', ${userId}::text, true)`;
+    return fn(tx);
+  });
+}
+
+/**
  * Comprueba contra la base de datos que el aislamiento sigue intacto.
  *
  * Llamado al arrancar la API y desde CI. Devuelve la lista de problemas; si

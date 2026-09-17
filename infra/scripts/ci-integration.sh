@@ -6,9 +6,10 @@
 #  contenedores desechables. Parte de una base de datos VACÍA y recorre todo el
 #  camino que recorrería un despliegue:
 #
-#     rol de aplicación → migraciones → RLS, triggers e índices → verificación
-#     → seed → prueba de aislamiento → API (sondas y errores) → worker →
-#     prueba de humo → cierre ordenado del worker
+#     criptografía → rol de aplicación → migraciones → RLS, triggers e índices
+#     → verificación → seed → aislamiento → alta de empresa → API (sondas y
+#     errores) → worker → autenticación completa → prueba de humo → cierre
+#     ordenado del worker
 #
 #  Requisitos previos:
 #     · `pnpm install` y `pnpm build` ya ejecutados (usa los dist/ compilados,
@@ -89,6 +90,10 @@ wait_for() {
   fail "$name no respondió en $url tras ${seconds} s"
 }
 
+# --- 0 · Criptografía propia ---------------------------------------------------
+step "Criptografía contra vectores oficiales (RFC 4226, 6238, 4648)"
+pnpm --silent --filter @nexo/api crypto:selftest || fail "crypto:selftest"
+
 # --- 1 · Base de datos --------------------------------------------------------
 step "Rol de aplicación"
 pnpm --silent --filter @nexo/database create-app-role || fail "no se pudo crear el rol nexo_app"
@@ -141,6 +146,9 @@ node apps/worker/dist/main.js > "$CI_LOG_DIR/worker.log" 2>&1 &
 WORKER_PID=$!
 wait_for "$WORKER_HEALTH_URL" "$WORKER_PID" "El worker"
 ok "arrancó y su sonda responde (pid $WORKER_PID)"
+
+step "Autenticación de extremo a extremo (incluidos ataques)"
+pnpm --silent --filter @nexo/api auth:e2e || fail "auth:e2e"
 
 step "Prueba de humo del worker"
 pnpm --silent --filter @nexo/worker smoke || fail "prueba de humo"

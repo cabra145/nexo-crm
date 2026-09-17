@@ -10,6 +10,7 @@ export {
   platformPrisma,
   runInTenantTransaction,
   runInNewTenantTransaction,
+  runAsAuthenticatedUser,
   verifyTenantIsolation,
   getTenantScopedModels,
   disconnectDatabase,

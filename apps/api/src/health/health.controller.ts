@@ -3,6 +3,7 @@ import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { SkipThrottle } from '@nestjs/throttler';
 import type { Response } from 'express';
 import type Redis from 'ioredis';
+import { Public } from '../auth/decorators';
 import { DatabaseService } from '../database/database.service';
 import { REDIS } from '../redis/redis.module';
 
@@ -54,6 +55,7 @@ async function timed(run: () => Promise<string | void>): Promise<Check> {
  * provocaría reinicios en cascada de todas las instancias de la API.
  */
 @ApiTags('Salud')
+@Public()
 @SkipThrottle()
 @Controller('health')
 export class HealthController {
