@@ -7,6 +7,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { type ReactNode, useState } from 'react';
 import { ProblemAlert } from '@/components/auth/problem-alert';
+import { ContactActivity } from '@/components/crm/contact-activity';
 import { ContactForm } from '@/components/crm/contact-form';
 import { StageBadge } from '@/components/crm/stage-badge';
 import { TagChips } from '@/components/crm/tag-chips';
@@ -131,9 +132,7 @@ export function ContactDetailView({ slug, id }: { slug: string; id: string }) {
         <Data label="Creado">{dateFormat.format(new Date(c.createdAt))}</Data>
       </section>
 
-      <p className="text-sm text-fg-muted">
-        Las notas, tareas y la historia del contacto llegan en el siguiente bloque.
-      </p>
+      <ContactActivity contactId={c.id} slug={slug} />
 
       {editing ? (
         <ContactForm

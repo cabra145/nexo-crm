@@ -531,7 +531,236 @@ async function main(): Promise<void> {
     );
 
     /* ---------------------------------------------------------------------- */
-    section('11 · Rastro: auditoría y actividad del contacto');
+    section('11 · Tareas');
+    const hoy = new Date();
+    const ayer = new Date(Date.now() - 86_400_000);
+    const manana = new Date(Date.now() + 86_400_000);
+
+    const tarea = await http<{ id: string; assignee: { id: string } | null; status: string }>(
+      'POST',
+      '/tasks',
+      {
+        ...as(agentNorte),
+        body: {
+          title: 'Llamar para confirmar el pedido',
+          dueAt: hoy.toISOString(),
+          contactId: delNorte.body.id,
+        },
+      },
+    );
+    check(
+      'crear una tarea → 201, asignada a quien la crea',
+      tarea.status === 201 && tarea.body.assignee?.id === agentNorte.userId,
+      `${tarea.status}`,
+    );
+
+    const tareaAjena = await http('POST', '/tasks', {
+      ...as(agentNorte),
+      body: { title: 'Sobre un contacto que no veo', contactId: delSur.body.id },
+    });
+    check(
+      'vincular una tarea a un contacto fuera de tu alcance → 400',
+      tareaAjena.status === 400,
+      `${tareaAjena.status}`,
+    );
+
+    const aExterno = await http('POST', '/tasks', {
+      ...as(admin),
+      body: { title: 'Para alguien de fuera', assigneeId: otra.userId },
+    });
+    check(
+      'asignar una tarea a quien no es del equipo → 400',
+      aExterno.status === 400,
+      `${aExterno.status}`,
+    );
+
+    // Tramos: una atrasada, una de hoy, una futura y una sin fecha.
+    await http('POST', '/tasks', {
+      ...as(agentNorte),
+      body: { title: 'Atrasada', dueAt: ayer.toISOString() },
+    });
+    await http('POST', '/tasks', {
+      ...as(agentNorte),
+      body: { title: 'Próxima', dueAt: manana.toISOString() },
+    });
+    await http('POST', '/tasks', { ...as(agentNorte), body: { title: 'Algún día' } });
+
+    interface TaskListBody {
+      data: Array<{ id: string; title: string; status: string; completedAt: string | null }>;
+    }
+    const tramo = (s: Session, bucket: string) =>
+      http<TaskListBody>('GET', `/tasks?bucket=${bucket}&tzOffset=0`, as(s));
+
+    const atrasadas = await tramo(agentNorte, 'overdue');
+    const deHoy = await tramo(agentNorte, 'today');
+    const proximas = await tramo(agentNorte, 'upcoming');
+    const sinFecha = await tramo(agentNorte, 'someday');
+    check(
+      'los tramos reparten bien: atrasada, hoy, próxima y sin fecha',
+      atrasadas.body.data.every((t) => t.title === 'Atrasada') &&
+        atrasadas.body.data.length === 1 &&
+        deHoy.body.data.length === 1 &&
+        proximas.body.data.length === 1 &&
+        sinFecha.body.data.length === 1,
+      `${atrasadas.body.data.length}/${deHoy.body.data.length}/${proximas.body.data.length}/${sinFecha.body.data.length}`,
+    );
+
+    const delOtroAgente = await tramo(agentSur, 'today');
+    check(
+      'un agente no ve las tareas de otro',
+      delOtroAgente.body.data.length === 0,
+      `${delOtroAgente.body.data.length}`,
+    );
+    const paraElResponsable = await tramo(manager, 'today');
+    check(
+      'el responsable ve las de su equipo',
+      paraElResponsable.body.data.some((t) => t.id === tarea.body.id),
+    );
+
+    const completada = await http<{ status: string; completedAt: string | null }>(
+      'PATCH',
+      `/tasks/${tarea.body.id}`,
+      { ...as(agentNorte), body: { status: 'DONE' } },
+    );
+    check(
+      'completar una tarea guarda cuándo se hizo',
+      completada.status === 200 &&
+        completada.body.status === 'DONE' &&
+        completada.body.completedAt !== null,
+      `${completada.body.completedAt}`,
+    );
+    const hechas = await tramo(agentNorte, 'done');
+    const hoyTrasCompletar = await tramo(agentNorte, 'today');
+    check(
+      '…y pasa del tramo de hoy al de hechas',
+      hechas.body.data.some((t) => t.id === tarea.body.id) &&
+        !hoyTrasCompletar.body.data.some((t) => t.id === tarea.body.id),
+    );
+
+    const reabierta = await http<{ status: string; completedAt: string | null }>(
+      'PATCH',
+      `/tasks/${tarea.body.id}`,
+      { ...as(agentNorte), body: { status: 'PENDING' } },
+    );
+    check(
+      'reabrirla borra la fecha de cierre',
+      reabierta.body.status === 'PENDING' && reabierta.body.completedAt === null,
+    );
+
+    const editaAjenaTarea = await http('PATCH', `/tasks/${tarea.body.id}`, {
+      ...as(agentSur),
+      body: { title: 'Robada' },
+    });
+    check('editar la tarea de otro agente → 404', editaAjenaTarea.status === 404);
+
+    const borraTarea = await http('DELETE', `/tasks/${tarea.body.id}`, as(agentNorte));
+    const trasBorrarTarea = await tramo(agentNorte, 'someday');
+    check(
+      'eliminar una tarea la saca de los listados',
+      borraTarea.status === 204 && !trasBorrarTarea.body.data.some((t) => t.id === tarea.body.id),
+      `${borraTarea.status}`,
+    );
+
+    /* ---------------------------------------------------------------------- */
+    section('12 · Notas');
+    interface NoteBody {
+      id: string;
+      body: string;
+      author: { id: string; name: string } | null;
+      canEdit: boolean;
+    }
+    const nota = await http<NoteBody>('POST', `/contacts/${delNorte.body.id}/notes`, {
+      ...as(agentNorte),
+      body: { body: 'Pidió cotización de 200 unidades. Llamar el lunes.' },
+    });
+    check(
+      'añadir una nota → 201, con su autor',
+      nota.status === 201 && nota.body.author?.id === agentNorte.userId && nota.body.canEdit,
+      `${nota.status}`,
+    );
+
+    const notaVacia = await http('POST', `/contacts/${delNorte.body.id}/notes`, {
+      ...as(agentNorte),
+      body: { body: '   ' },
+    });
+    check('una nota vacía → 400', notaVacia.status === 400, `${notaVacia.status}`);
+
+    const notaEnAjeno = await http('POST', `/contacts/${delSur.body.id}/notes`, {
+      ...as(agentNorte),
+      body: { body: 'No debería poder' },
+    });
+    check('escribir en un contacto fuera de tu alcance → 404', notaEnAjeno.status === 404);
+
+    const notasDelResponsable = await http<NoteBody[]>(
+      'GET',
+      `/contacts/${delNorte.body.id}/notes`,
+      as(manager),
+    );
+    check(
+      'el responsable lee las notas de su equipo, pero no puede editarlas',
+      notasDelResponsable.status === 200 &&
+        notasDelResponsable.body.length === 1 &&
+        notasDelResponsable.body[0]!.canEdit === false,
+      `${notasDelResponsable.body.length} nota(s)`,
+    );
+    const editaNotaAjena = await http('PATCH', `/notes/${nota.body.id}`, {
+      ...as(manager),
+      body: { body: 'Reescrita por otro' },
+    });
+    check('…y si lo intenta → 403', editaNotaAjena.status === 403, `${editaNotaAjena.status}`);
+
+    const editaPropia = await http<NoteBody>('PATCH', `/notes/${nota.body.id}`, {
+      ...as(agentNorte),
+      body: { body: 'Pidió cotización de 300 unidades.' },
+    });
+    check(
+      'el autor sí la edita',
+      editaPropia.status === 200 && editaPropia.body.body.includes('300'),
+    );
+
+    const adminEdita = await http('PATCH', `/notes/${nota.body.id}`, {
+      ...as(admin),
+      body: { body: 'Corregida por administración.' },
+    });
+    check(
+      'quien gestiona los datos (contact:delete) también puede corregirla',
+      adminEdita.status === 200,
+      `${adminEdita.status}`,
+    );
+
+    /* ---------------------------------------------------------------------- */
+    section('13 · Historia del contacto');
+    const historia = await http<Array<{ type: string; title: string }>>(
+      'GET',
+      `/contacts/${delNorte.body.id}/historia`,
+      as(agentNorte),
+    );
+    check(
+      'la historia cuenta la creación, la tarea y la nota, de lo más reciente',
+      historia.status === 200 &&
+        historia.body.some((a) => a.type === 'SYSTEM' && a.title === 'Contacto creado') &&
+        historia.body.some((a) => a.type === 'TASK' && a.title.startsWith('Tarea creada')) &&
+        historia.body.some((a) => a.type === 'TASK' && a.title.startsWith('Tarea completada')) &&
+        historia.body.some((a) => a.type === 'NOTE'),
+      historia.body.map((a) => a.type).join(', '),
+    );
+    const historiaAjena = await http('GET', `/contacts/${delSur.body.id}/historia`, as(agentNorte));
+    check('la historia de un contacto ajeno → 404', historiaAjena.status === 404);
+
+    const borraNota = await http('DELETE', `/notes/${nota.body.id}`, as(agentNorte));
+    const notasTrasBorrar = await http<NoteBody[]>(
+      'GET',
+      `/contacts/${delNorte.body.id}/notes`,
+      as(agentNorte),
+    );
+    check(
+      'eliminar la nota la quita de la lista',
+      borraNota.status === 204 && notasTrasBorrar.body.length === 0,
+      `${borraNota.status}`,
+    );
+
+    /* ---------------------------------------------------------------------- */
+    section('14 · Rastro: auditoría y actividad del contacto');
     await http('PATCH', `/contacts/${created.body.id}`, {
       ...as(admin),
       body: { lifecycleStage: 'CUSTOMER' },
@@ -544,7 +773,7 @@ async function main(): Promise<void> {
     ) {
       acciones = (
         await db.auditLog.findMany({
-          where: { tenantId, resourceType: { in: ['Contact', 'Company', 'Tag'] } },
+          where: { tenantId, resourceType: { in: ['Contact', 'Company', 'Tag', 'Task', 'Note'] } },
           select: { action: true },
         })
       ).map((a) => a.action);

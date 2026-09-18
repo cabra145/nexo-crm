@@ -1,4 +1,5 @@
 import type {
+  ActivityView,
   CompanyCreateInput,
   CompanyDetail,
   CompanyListItem,
@@ -10,9 +11,14 @@ import type {
   CrmUsage,
   ListCompaniesQuery,
   ListContactsQuery,
+  ListTasksQuery,
+  NoteView,
   Paginated,
   TagCreateInput,
   TagView,
+  TaskCreateInput,
+  TaskUpdateInput,
+  TaskView,
 } from '@nexo/contracts';
 import { apiFetch } from '@/lib/api/client';
 
@@ -58,6 +64,42 @@ export const crmApi = {
     apiFetch<void>(`/companies/${id}`, { method: 'DELETE', auth: true }),
 
   tags: () => apiFetch<TagView[]>('/tags', { auth: true }),
+
+  /* --- Agenda --------------------------------------------------------------- */
+
+  tasks: (params: Partial<ListTasksQuery> = {}) =>
+    apiFetch<Paginated<TaskView>>(
+      `/tasks${query({ ...params, tzOffset: new Date().getTimezoneOffset() })}`,
+      {
+        auth: true,
+      },
+    ),
+
+  createTask: (input: TaskCreateInput) =>
+    apiFetch<TaskView>('/tasks', { method: 'POST', body: input, auth: true }),
+
+  updateTask: (id: string, input: TaskUpdateInput) =>
+    apiFetch<TaskView>(`/tasks/${id}`, { method: 'PATCH', body: input, auth: true }),
+
+  deleteTask: (id: string) => apiFetch<void>(`/tasks/${id}`, { method: 'DELETE', auth: true }),
+
+  notes: (contactId: string) =>
+    apiFetch<NoteView[]>(`/contacts/${contactId}/notes`, { auth: true }),
+
+  createNote: (contactId: string, body: string) =>
+    apiFetch<NoteView>(`/contacts/${contactId}/notes`, {
+      method: 'POST',
+      body: { body },
+      auth: true,
+    }),
+
+  updateNote: (id: string, body: string) =>
+    apiFetch<NoteView>(`/notes/${id}`, { method: 'PATCH', body: { body }, auth: true }),
+
+  deleteNote: (id: string) => apiFetch<void>(`/notes/${id}`, { method: 'DELETE', auth: true }),
+
+  timeline: (contactId: string) =>
+    apiFetch<ActivityView[]>(`/contacts/${contactId}/historia`, { auth: true }),
 
   createTag: (input: TagCreateInput) =>
     apiFetch<TagView>('/tags', { method: 'POST', body: input, auth: true }),

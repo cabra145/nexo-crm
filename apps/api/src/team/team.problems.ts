@@ -34,6 +34,15 @@ export const selfChange = () =>
     detail: 'Pide a otra persona con permiso que lo haga.',
   });
 
+/** Nota o dato de otra persona: no se reescribe lo que otro anotó. */
+export const notYours = (detail: string) =>
+  new ProblemException({
+    type: PROBLEM_TYPES.FORBIDDEN,
+    title: 'No puedes modificar esto',
+    status: HttpStatus.FORBIDDEN,
+    detail,
+  });
+
 export const conflict = (title: string, detail?: string, type: string = PROBLEM_TYPES.CONFLICT) =>
   new ProblemException({ type, title, status: HttpStatus.CONFLICT, detail });
 

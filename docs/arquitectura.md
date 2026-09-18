@@ -235,6 +235,30 @@ propósito, `crm:e2e` falla en cuatro comprobaciones: el agente veía los cuatro
 contactos de la empresa, abría y editaba fichas ajenas, el responsable veía
 otros equipos y la búsqueda devolvía de más.
 
+### Agenda: tareas, notas e historia — bloque 1.4b
+
+| Decisión                                                           | Por qué                                                                                                                                                                                              |
+| ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **El alcance de las tareas va sobre `assigneeId`**                 | Mismo mecanismo que los contactos, otro campo: un agente ve las suyas, un responsable las de su equipo. Una tarea sin responsable sólo la ve quien tiene alcance de empresa                          |
+| **«Hoy» se calcula con la zona del navegador**                     | El navegador manda su desfase (`getTimezoneOffset`) y los tramos se calculan con él. Con el servidor en UTC y el usuario en Quito, una tarea de las 23:00 locales no puede aparecer como «de mañana» |
+| **La fecha de cierre la pone el servidor**                         | Completar una tarea guarda `completedAt` en la API, no en el cliente; reabrirla lo borra                                                                                                             |
+| **Una tarea sólo se vincula a un contacto que puedas ver**         | Si no, sería una vía para descubrir contactos ajenos por su id                                                                                                                                       |
+| **Las notas las edita su autor, y nadie más salvo administración** | `contact:delete` con alcance de EMPRESA puede corregirlas; un responsable de equipo las lee pero no las reescribe. Lo que alguien anotó es su testimonio de lo que pasó                              |
+| **Tres secciones, no una lista mezclada**                          | Tareas (trabajo por hacer), notas (lo que alguien quiso dejar escrito) e historia (registro de lo ocurrido). Mezclarlas obliga a leerlo todo para encontrar cualquiera de las tres                   |
+| **La casilla de completar responde al instante**                   | Actualización optimista con reversión si la API falla. Se vio en la prueba: esperar la ida y vuelta hacía que la casilla no reaccionara al primer clic                                               |
+
+**Diagnóstico antes que reintento.** Un fallo intermitente de `auth:e2e` acabó
+en un `TypeError` sobre un campo ausente, que escondía la causa real (no llegó
+el correo). Ahora, si el enlace no aparece, la prueba corta con un mensaje que
+dice dónde mirar: el log del worker y la cola `email`.
+
+**Margen para máquinas cargadas.** Una ejecución completa pasó de 40 s a 8 min
+con el mismo código, y nueve pruebas de navegador fallaron por clics sobre
+elementos que aún se movían; la causa era la carga de la máquina (un `pnpm dev`
+y Docker a la vez), no el producto. Playwright tiene ahora un reintento y
+tiempos más holgados: un fallo real vuelve a fallar en el reintento, la
+lentitud no.
+
 ### El particionado de `message` queda aplazado
 
 El plan lo daba por hecho desde el inicio. Prisma no puede crear una tabla

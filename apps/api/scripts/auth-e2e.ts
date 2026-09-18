@@ -69,6 +69,15 @@ async function main(): Promise<void> {
     const verifyText = await waitForMail(owner1.email, 'Confirma tu correo', t0);
     const verifyToken = tokenFrom(verifyText);
     check('llega el correo de confirmación, con enlace', Boolean(verifyToken));
+    // Sin ese enlace no hay prueba que seguir, y continuar sólo produce
+    // errores posteriores que esconden la causa (pasó una vez: un TypeError
+    // sobre un campo ausente en vez de «no llegó el correo»).
+    if (!verifyToken) {
+      throw new Error(
+        'No llegó el correo de confirmación. Mira el log del worker y la cola "email": ' +
+          'suele ser que el worker no procesó el trabajo o que Mailpit no estaba listo.',
+      );
+    }
 
     const early = await http('POST', '/auth/login', {
       body: { email: owner1.email, password: owner1.password },

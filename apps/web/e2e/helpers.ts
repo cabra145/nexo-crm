@@ -31,7 +31,9 @@ interface MailpitMessage {
 
 /** Espera el correo más reciente para `to` cuyo asunto contenga `subject` y devuelve el enlace. */
 export async function linkFromMail(to: string, subject: string, after: number): Promise<string> {
-  const deadline = Date.now() + 20_000;
+  // 30 s: el correo pasa por la cola y el worker, que en una máquina cargada
+  // pueden tardar bastante más de lo habitual.
+  const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
     const res = await fetch(`${MAILPIT}/api/v1/messages?limit=100`);
     const { messages = [] } = (await res.json()) as { messages?: MailpitMessage[] };

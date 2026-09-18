@@ -230,3 +230,67 @@ test('en móvil, el menú lateral navega y nada se sale de la pantalla', async (
 
   await owner.context.close();
 });
+
+test('tareas y notas de un contacto, y la agenda', async ({ browser }) => {
+  const owner = await ownerWithWorkspace(browser, 'agenda');
+  const { page, slug } = owner;
+
+  await createContact(page, slug, { firstName: 'Rosa', lastName: 'Villalba' });
+
+  // Cada sección por separado: el título de una tarea aparece también en la
+  // historia, y una nota, en su resumen.
+  const seccion = (nombre: string) =>
+    page.locator('section', { has: page.getByRole('heading', { name: nombre, exact: true }) });
+  const tareas = seccion('Tareas');
+  const notas = seccion('Notas');
+  const historia = seccion('Historia');
+
+  // --- Tarea desde la ficha ------------------------------------------------
+  await page.getByLabel('Título de la tarea').fill('Enviar la cotización');
+  await page.getByRole('button', { name: 'Añadir' }).click();
+  await expect(tareas.getByText('Enviar la cotización')).toBeVisible();
+  await expect(page.getByText('Nada pendiente con este contacto.')).toHaveCount(0);
+
+  // --- Nota ----------------------------------------------------------------
+  await page.getByLabel('Nueva nota').fill('Prefiere que la llamen por la mañana.');
+  await page.getByRole('button', { name: 'Guardar nota' }).click();
+  await expect(notas.getByText('Prefiere que la llamen por la mañana.')).toBeVisible();
+
+  // La historia recoge la creación, la tarea y la nota.
+  await expect(historia.getByText('Contacto creado')).toBeVisible();
+  await expect(historia.getByText('Tarea creada: Enviar la cotización')).toBeVisible();
+  await expect(historia.getByText('Nota añadida')).toBeVisible();
+
+  // --- Editar la nota propia ------------------------------------------------
+  await notas.getByRole('button', { name: 'Editar' }).click();
+  await page.getByLabel('Editar la nota').fill('Prefiere que la llamen por la tarde.');
+  await notas.getByRole('button', { name: 'Guardar', exact: true }).click();
+  await expect(notas.getByText('Prefiere que la llamen por la tarde.')).toBeVisible();
+
+  // --- La tarea aparece en la agenda y se completa ---------------------------
+  await page.goto(`/w/${slug}/tareas`);
+  await page.getByRole('tab', { name: 'Sin fecha' }).click();
+  // El tramo elegido queda marcado, y sólo él: si el resalte no siguiera al
+  // contenido, la agenda mentiría sobre lo que estás viendo.
+  await expect(page.getByRole('tab', { name: 'Sin fecha' })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  );
+  await expect(page.getByRole('tab', { name: 'Para hoy' })).toHaveAttribute(
+    'aria-selected',
+    'false',
+  );
+  await expect(page.getByText('Enviar la cotización')).toBeVisible();
+  await page.getByRole('checkbox', { name: 'Completar «Enviar la cotización»' }).check();
+  await expect(page.getByText('Nada por aquí')).toBeVisible();
+
+  await page.getByRole('tab', { name: 'Hechas' }).click();
+  await expect(page.getByText('Enviar la cotización')).toBeVisible();
+
+  // Y la historia del contacto lo registra.
+  await page.goto(`/w/${slug}/contactos`);
+  await page.getByText('Rosa Villalba').first().click();
+  await expect(historia.getByText('Tarea completada: Enviar la cotización')).toBeVisible();
+
+  await owner.context.close();
+});

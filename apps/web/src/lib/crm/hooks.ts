@@ -1,6 +1,6 @@
 'use client';
 
-import type { ListContactsQuery } from '@nexo/contracts';
+import type { ListContactsQuery, ListTasksQuery } from '@nexo/contracts';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { crmApi } from './api';
@@ -47,6 +47,19 @@ export const useCompanies = (q: string) =>
 
 export const useCompany = (id: string) =>
   useQuery({ queryKey: crmKeys.company(id), queryFn: () => crmApi.company(id) });
+
+/** Tareas de un tramo de la agenda. */
+export const useTasks = (params: Partial<ListTasksQuery>) =>
+  useQuery({
+    queryKey: ['crm', 'tasks', params],
+    queryFn: () => crmApi.tasks(params),
+  });
+
+export const useNotes = (contactId: string) =>
+  useQuery({ queryKey: ['crm', 'notes', contactId], queryFn: () => crmApi.notes(contactId) });
+
+export const useTimeline = (contactId: string) =>
+  useQuery({ queryKey: ['crm', 'timeline', contactId], queryFn: () => crmApi.timeline(contactId) });
 
 /** Espera a que el usuario deje de escribir antes de consultar. */
 export function useDebounced<T>(value: T, ms = 300): T {

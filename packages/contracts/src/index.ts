@@ -13,3 +13,4 @@ export * from './brand';
 export * from './auth';
 export * from './team';
 export * from './crm';
+export * from './tasks';

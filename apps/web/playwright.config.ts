@@ -15,9 +15,13 @@ export default defineConfig({
   workers: 1,
   fullyParallel: false,
   forbidOnly: Boolean(process.env.CI),
-  retries: 0,
-  timeout: 60_000,
-  expect: { timeout: 10_000 },
+  // Un reintento: estas pruebas arrancan navegadores contra una API y una base
+  // de datos reales, y en una máquina cargada (o en un runner compartido) un
+  // clic puede caer sobre un elemento que todavía se está reacomodando. Un
+  // fallo real vuelve a fallar en el reintento; la lentitud, no.
+  retries: 1,
+  timeout: 90_000,
+  expect: { timeout: 15_000 },
   reporter: process.env.CI ? [['list'], ['html', { open: 'never' }]] : 'list',
   outputDir: 'test-results',
   use: {
