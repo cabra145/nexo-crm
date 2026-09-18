@@ -317,6 +317,54 @@ async function main() {
     });
   }
 
+  console.log('\n8b · Identidad de webhook: sólo el canal de la URL, y sólo lectura');
+  {
+    // Todo en una transacción que se deshace: los canales sólo existen aquí.
+    await app.query('BEGIN');
+    try {
+      const insertChannel = async (tenantId, externalId) => {
+        await app.query(`SELECT set_config('app.tenant_id', $1, true)`, [tenantId]);
+        const { rows } = await app.query(
+          `INSERT INTO channel (tenant_id, type, name, external_id, updated_at)
+           VALUES ($1, 'WHATSAPP_CLOUD', 'Prueba', $2, now()) RETURNING id`,
+          [tenantId, externalId],
+        );
+        return rows[0].id;
+      };
+      const acmeChannel = await insertChannel(acme, `iso-acme-${Date.now()}`);
+      const borealChannel = await insertChannel(boreal, `iso-boreal-${Date.now()}`);
+
+      // Sin empresa, con la identidad del webhook del canal de Acme.
+      await app.query(`SELECT set_config('app.tenant_id', '', true)`);
+      await app.query(`SELECT set_config('app.webhook_channel_id', $1, true)`, [acmeChannel]);
+
+      const visible = await app.query('SELECT id, tenant_id FROM channel');
+      check(
+        'el webhook ve su canal y sólo ese, con la empresa a la que pertenece',
+        visible.rows.length === 1 &&
+          visible.rows[0].id === acmeChannel &&
+          visible.rows[0].tenant_id === acme,
+        `ve ${visible.rows.length}`,
+      );
+      check(
+        'no ve el canal de otra empresa aunque sepa que existe',
+        (await count(app, 'SELECT count(*) n FROM channel WHERE id = $1', [borealChannel])) === 0,
+      );
+      check(
+        'con identidad de webhook, contactos y conversaciones siguen ocultos',
+        (await count(app, 'SELECT count(*) n FROM contact')) === 0 &&
+          (await count(app, 'SELECT count(*) n FROM conversation')) === 0,
+      );
+      const { rowCount: renamed } = await app.query(
+        `UPDATE channel SET name = 'Tocado' WHERE id = $1`,
+        [acmeChannel],
+      );
+      check('con identidad de webhook no se puede modificar el canal', renamed === 0);
+    } finally {
+      await app.query('ROLLBACK');
+    }
+  }
+
   console.log('\n9 · Alta de empresa: sólo la del contexto activo');
   {
     const { rows } = await app.query('SELECT uuid_generate_v7()::text AS id');

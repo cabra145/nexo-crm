@@ -329,6 +329,26 @@ export async function runAsAuthenticatedUser<T>(
 }
 
 /**
+ * Ejecuta `fn` con la identidad del WEBHOOK de un canal, sin empresa activa.
+ *
+ * Sirve sólo para una cosa: leer la fila de `channel` cuyo id trae la URL del
+ * webhook, y con ella saber su empresa y su secreto de firma. La política
+ * `channel_webhook_select` de prisma/sql/01_rls.sql no deja ver nada más.
+ *
+ * El procesamiento del mensaje NO va aquí: se hace después con
+ * `runWithTenantContext`, como cualquier dato de negocio.
+ */
+export async function runAsWebhookChannel<T>(
+  channelId: string,
+  fn: (tx: Prisma.TransactionClient) => Promise<T>,
+): Promise<T> {
+  return platformPrisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT set_config('app.webhook_channel_id', ${channelId}::text, true)`;
+    return fn(tx);
+  });
+}
+
+/**
  * Comprueba contra la base de datos que el aislamiento sigue intacto.
  *
  * Llamado al arrancar la API y desde CI. Devuelve la lista de problemas; si

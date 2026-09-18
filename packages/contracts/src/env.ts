@@ -113,6 +113,16 @@ export const apiEnvSchema = baseSchema.extend({
   META_WEBHOOK_VERIFY_TOKEN: z.string().optional(),
   META_APP_SECRET: z.string().optional(),
   META_GRAPH_VERSION: z.string().default('v21.0'),
+  /**
+   * Base de la Graph API de Meta. Configurable para las pruebas, que apuntan a
+   * un simulador local en vez de a Meta.
+   */
+  META_GRAPH_URL: z.string().url().default('https://graph.facebook.com'),
+  /**
+   * URL pública de esta API, para mostrar la dirección del webhook que hay que
+   * dar de alta en Meta. En producción, la del dominio detrás de Nginx.
+   */
+  API_PUBLIC_URL: z.string().url().optional(),
 
   RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(60_000),
   RATE_LIMIT_MAX: z.coerce.number().int().positive().default(300),

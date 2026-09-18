@@ -218,6 +218,39 @@ CREATE POLICY role_member_select ON public.role
   );
 
 -- ----------------------------------------------------------------------------
+--  3c · El webhook de un canal: saber de qué empresa es
+--
+--  Meta llama al webhook sin sesión y sin empresa. La URL lleva el id del
+--  canal (un UUID v7 que no se puede adivinar), y con él hay que averiguar a
+--  qué empresa pertenece y cuál es su secreto de firma. Con sólo las políticas
+--  por empresa, `channel` devolvería cero filas.
+--
+--  Mismo patrón que la identidad de usuario de 3b: una tercera identidad en el
+--  contexto, `app.webhook_channel_id`, que la API fija con el id que trae la
+--  URL. Con ella se puede LEER esa única fila de `channel` —la que ya se
+--  conoce por su id— y nada más: ni otros canales, ni conversaciones, ni
+--  mensajes. El procesamiento posterior corre ya con `app.tenant_id`.
+--
+--  No hace falta ninguna función SECURITY DEFINER ni ningún rol con
+--  privilegios: sigue siendo `nexo_app` bajo RLS forzada.
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION current_webhook_channel_id()
+RETURNS uuid
+LANGUAGE sql
+STABLE
+PARALLEL SAFE
+AS $$
+  SELECT NULLIF(current_setting('app.webhook_channel_id', true), '')::uuid;
+$$;
+
+COMMENT ON FUNCTION current_webhook_channel_id() IS
+  'Canal cuyo webhook se está atendiendo. NULL si no se fijó: la política no deja pasar nada.';
+
+DROP POLICY IF EXISTS channel_webhook_select ON public.channel;
+CREATE POLICY channel_webhook_select ON public.channel
+  FOR SELECT USING (id = current_webhook_channel_id());
+
+-- ----------------------------------------------------------------------------
 --  4 · Permisos del rol de aplicación
 --
 --  `nexo_app` puede leer y escribir, pero NO es dueño de las tablas y no tiene

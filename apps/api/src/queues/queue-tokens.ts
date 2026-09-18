@@ -7,3 +7,4 @@
  */
 export const EMAIL_QUEUE = Symbol('EMAIL_QUEUE');
 export const AUDIT_QUEUE = Symbol('AUDIT_QUEUE');
+export const WHATSAPP_INBOUND_QUEUE = Symbol('WHATSAPP_INBOUND_QUEUE');

@@ -22,6 +22,12 @@ export const QUEUE_NAMES = {
    * la petición del usuario, que es lo que se audita.
    */
   AUDIT: 'audit',
+  /**
+   * Webhooks de WhatsApp ya recibidos y guardados. La API responde a Meta en
+   * cuanto el evento está a salvo en `webhook_event`; crear el contacto, la
+   * conversación y el mensaje se hace aquí, con reintentos.
+   */
+  WHATSAPP_INBOUND: 'whatsapp-inbound',
 } as const;
 
 export type QueueName = (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES];
@@ -54,6 +60,15 @@ export const QUEUE_POLICIES: Record<
     backoffMs: 30_000,
     keepCompleted: { hours: 24, max: 1_000 },
     keepFailed: { days: 14 },
+    concurrency: 5,
+  },
+  'whatsapp-inbound': {
+    // Si falla es por la base de datos: se insiste. Un mensaje de un cliente
+    // que no llega a la bandeja es una venta que se pierde.
+    attempts: 8,
+    backoffMs: 5_000,
+    keepCompleted: { hours: 6, max: 2_000 },
+    keepFailed: { days: 30 },
     concurrency: 5,
   },
   audit: {
@@ -158,3 +173,15 @@ export const auditJobSchema = z.object({
 });
 
 export type AuditJob = z.infer<typeof auditJobSchema>;
+
+/* ========================================================================== */
+/*  Cola `whatsapp-inbound`                                                   */
+/* ========================================================================== */
+
+export const whatsappInboundJobSchema = z.object({
+  /** Fila de `webhook_event` con la carga tal cual llegó de Meta. */
+  webhookEventId: uuidSchema,
+  tenantId: uuidSchema,
+  channelId: uuidSchema,
+});
+export type WhatsappInboundJob = z.infer<typeof whatsappInboundJobSchema>;

@@ -15,3 +15,4 @@ export * from './team';
 export * from './crm';
 export * from './tasks';
 export * from './deals';
+export * from './whatsapp';

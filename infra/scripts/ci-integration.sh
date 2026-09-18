@@ -49,6 +49,9 @@ export WEB_PORT="${WEB_PORT:-3000}"
 # la API tienen que ser el mismo «sitio» para que el navegador envíe la cookie
 # de refresco (SameSite=Lax).
 export APP_URL="${APP_URL:-http://localhost:${WEB_PORT}}"
+# La Graph API de Meta, simulada: whatsapp:e2e levanta un simulador en este
+# puerto y la API lo consulta en lugar de a Meta. El CI no depende de Meta.
+export META_GRAPH_URL="${META_GRAPH_URL:-http://127.0.0.1:44200}"
 export SMTP_HOST="${SMTP_HOST:-localhost}"
 export SMTP_PORT="${SMTP_PORT:-1025}"
 export SMTP_FROM="${SMTP_FROM:-Nexo CRM <no-responder@nexo.test>}"
@@ -188,6 +191,9 @@ pnpm --silent --filter @nexo/api crm:e2e || fail "crm:e2e"
 step "Embudo de ventas de extremo a extremo (orden del tablero y reequilibrio)"
 pnpm --silent --filter @nexo/api deals:e2e || fail "deals:e2e"
 
+step "WhatsApp de extremo a extremo (simulador de Meta, firma, idempotencia)"
+pnpm --silent --filter @nexo/api whatsapp:e2e || fail "whatsapp:e2e"
+
 step "Prueba de humo del worker"
 pnpm --silent --filter @nexo/worker smoke || fail "prueba de humo"
 # Un reintento idempotente es un caso normal, no un error: no puede dejar
@@ -217,6 +223,10 @@ wait_for "$WEB_URL/login" "$WEB_PID" "La web"
 ok "arrancó en $WEB_URL (pid $WEB_PID)"
 
 step "Pruebas de navegador (Playwright · Chromium)"
+# Todas las suites entran desde 127.0.0.1: sin esto, Playwright hereda los
+# intentos de inicio de sesión de las anteriores y pasa del límite por IP.
+pnpm --silent --filter @nexo/api exec tsx scripts/reset-login-ip-limits.ts \
+  || fail "reiniciar el límite de inicio de sesión por IP"
 WEB_URL="$WEB_URL" MAILPIT_URL="$MAILPIT_URL" \
   pnpm --silent --filter @nexo/web test:e2e || fail "pruebas de navegador"
 kill "$WEB_PID" 2>/dev/null || true

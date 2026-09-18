@@ -291,6 +291,44 @@ interfaz (`pipeline:manage`) y la sección de oportunidades en la ficha del
 contacto llegan con los paneles comerciales. Hoy el contacto ya guarda en su
 historia la creación de sus oportunidades y cada cambio de etapa.
 
+### WhatsApp: canal y webhook — bloque 2.1
+
+| Decisión                                                | Por qué                                                                                                                                                                                                                                                             |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Conexión manual, con la app de Meta de cada empresa** | La empresa pega el identificador del número, el de su cuenta, un token de usuario del sistema y la clave secreta de su app. El registro integrado de Meta («Embedded Signup») exige ser proveedor tecnológico verificado; podrá venir después sobre esta misma base |
+| **Se comprueba con Meta antes de guardar**              | Conectar consulta el número en la Graph API con ese token. Un canal que parece conectado pero no recibe nada es peor que un error al darlo de alta                                                                                                                  |
+| **Una URL de webhook por canal**                        | `/api/v1/webhooks/whatsapp/{id del canal}`. Cada empresa firma con la clave de SU app, así que la URL dice qué clave usar; además el `phone_number_id` del evento tiene que ser el del canal, o se ignora                                                           |
+| **La empresa del webhook se averigua sin privilegios**  | Identidad de sólo lectura `app.webhook_channel_id` (01_rls.sql, 3c): con el id de la URL se puede leer ESA fila de `channel` y nada más. Mismo patrón que la identidad de usuario del inicio de sesión; ninguna función SECURITY DEFINER                            |
+| **Firma HMAC sobre los bytes exactos**                  | `X-Hub-Signature-256` se calcula sobre el cuerpo crudo (`rawBody`), comparado en tiempo constante. Volver a serializar el JSON cambiaría los bytes                                                                                                                  |
+| **Recibir y procesar, separados**                       | La API sólo verifica, guarda en `webhook_event` y encola; responde a Meta al momento. El worker crea contacto, conversación y mensaje en UNA transacción de la empresa, con reintentos                                                                              |
+| **Idempotencia en dos capas**                           | El mismo cuerpo no se guarda dos veces (su SHA-256 es el id del evento), y el mismo mensaje no se guarda dos veces (índice único canal + `wamid`), aunque llegue en otro cuerpo                                                                                     |
+| **Los estados de entrega sólo avanzan**                 | Meta no garantiza el orden: un «entregado» tras un «leído» se ignora, y un «fallido» no deshace uno ya entregado o leído                                                                                                                                            |
+| **El contacto se reconoce por su número**               | Como WhatsApp o como teléfono; si no existe se crea sin responsable, con un bloqueo por número para que dos mensajes simultáneos de alguien nuevo no creen dos contactos                                                                                            |
+| **Credenciales cifradas, nunca devueltas**              | Token y clave secreta van con AES-256-GCM. La interfaz sólo muestra lo que hay que pegar en Meta: la URL y el token de verificación                                                                                                                                 |
+| **Desconectar conserva el historial**                   | Borra las credenciales y libera el número para conectarlo en otra empresa; las conversaciones se quedan                                                                                                                                                             |
+| **Un simulador de Meta en las pruebas**                 | `whatsapp:e2e` levanta una Graph API falsa y firma los eventos como Meta. El CI no depende de Meta ni de un número real; la validación contra Meta de verdad queda para el bloque 2.4                                                                               |
+
+**Pruebas que se han visto fallar.** Con la firma sin comprobar, un evento
+firmado con otra clave entraba. Sin comprobar el número del canal, el mensaje
+de la empresa B aparecía en la empresa A. Con los estados sin orden, un
+«fallido» deshacía un mensaje leído. Con la política del webhook abierta, la
+prueba de aislamiento veía los dos canales. Y un fallo de la propia prueba: dos
+avisos de estado en el mismo segundo tenían el mismo cuerpo, el segundo se
+descartaba como reenvío y la comprobación del orden pasaba sin probar nada;
+ahora cada aviso lleva su instante.
+
+**El límite de inicio de sesión por IP y el CI.** Todas las suites entran
+desde 127.0.0.1; sumadas hacían 52 inicios de sesión, por encima de los 50 cada
+15 minutos que se permiten a una IP, y la última prueba de navegador recibía
+429 («Demasiados intentos»). El límite es correcto; el fallo era que una suite
+heredaba el contador de otra. Antes de Playwright,
+`scripts/reset-login-ip-limits.ts` borra sólo los contadores `login-ip`; los
+bloqueos por cuenta no se tocan.
+
+**Por confirmar contra Meta real (2.4):** la versión de la Graph API
+(`META_GRAPH_VERSION`, hoy `v21.0` por defecto) y los textos exactos de sus
+errores.
+
 ### El particionado de `message` queda aplazado
 
 El plan lo daba por hecho desde el inicio. Prisma no puede crear una tabla

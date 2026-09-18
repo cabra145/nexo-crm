@@ -38,7 +38,7 @@ if command -v caffeinate >/dev/null 2>&1; then
   caffeinate -i -w $$ &
 fi
 
-for port in $PG_PORT $REDIS_PORT $SMTP_PORT $MAILPIT_PORT 44000 44100 43000; do
+for port in $PG_PORT $REDIS_PORT $SMTP_PORT $MAILPIT_PORT 44000 44100 43000 44200; do
   if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
     echo "El puerto $port está ocupado. Libéralo o detén la ejecución anterior." >&2
     exit 1
@@ -83,5 +83,6 @@ env -i PATH="$PATH" HOME="$HOME" \
   REDIS_URL="redis://127.0.0.1:$REDIS_PORT" \
   SMTP_HOST=127.0.0.1 SMTP_PORT="$SMTP_PORT" MAILPIT_URL="http://127.0.0.1:$MAILPIT_PORT" \
   API_PORT=44000 WORKER_HEALTH_PORT=44100 WEB_PORT=43000 \
+  META_GRAPH_URL=http://127.0.0.1:44200 \
   CI_LOG_DIR="$ROOT/.ci-logs" \
   bash infra/scripts/ci-integration.sh

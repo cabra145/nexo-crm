@@ -5,6 +5,8 @@ export interface PlanLimits {
   maxUsers: number | null;
   /** Contactos incluidos. Null = sin límite. */
   maxContacts: number | null;
+  /** Canales de mensajería. Null = sin límite. */
+  maxChannels: number | null;
   customRoles: boolean;
 }
 
@@ -23,16 +25,20 @@ export async function loadPlanLimits(tx: TenantTransactionClient): Promise<PlanL
         select: {
           maxUsers: true,
           maxContacts: true,
+          maxChannels: true,
           features: { where: { key: 'custom_roles' }, select: { enabled: true } },
         },
       },
     },
   });
-  if (!subscription) return { maxUsers: null, maxContacts: null, customRoles: false };
+  if (!subscription) {
+    return { maxUsers: null, maxContacts: null, maxChannels: null, customRoles: false };
+  }
 
   const overrides = (subscription.limitOverrides ?? {}) as {
     maxUsers?: unknown;
     maxContacts?: unknown;
+    maxChannels?: unknown;
   };
   const maxUsers =
     typeof overrides.maxUsers === 'number' ? overrides.maxUsers : subscription.plan.maxUsers;
@@ -41,8 +47,14 @@ export async function loadPlanLimits(tx: TenantTransactionClient): Promise<PlanL
       ? overrides.maxContacts
       : subscription.plan.maxContacts;
 
+  const maxChannels =
+    typeof overrides.maxChannels === 'number'
+      ? overrides.maxChannels
+      : subscription.plan.maxChannels;
+
   return {
     maxUsers: maxUsers < 0 ? null : maxUsers,
+    maxChannels: maxChannels < 0 ? null : maxChannels,
     maxContacts: maxContacts < 0 ? null : maxContacts,
     customRoles: subscription.plan.features.some((f) => f.enabled),
   };

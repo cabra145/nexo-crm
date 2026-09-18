@@ -16,6 +16,9 @@ async function bootstrap(): Promise<void> {
     // Retiene los logs del arranque hasta que el logger estructurado esté
     // listo, para que no salgan unos en un formato y otros en otro.
     bufferLogs: true,
+    // Cuerpo crudo disponible en `req.rawBody`: la firma de los webhooks de
+    // Meta se calcula sobre los bytes exactos, no sobre el JSON ya parseado.
+    rawBody: true,
   });
 
   const logger = app.get(Logger);

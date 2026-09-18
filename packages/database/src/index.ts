@@ -11,6 +11,7 @@ export {
   runInTenantTransaction,
   runInNewTenantTransaction,
   runAsAuthenticatedUser,
+  runAsWebhookChannel,
   verifyTenantIsolation,
   getTenantScopedModels,
   disconnectDatabase,

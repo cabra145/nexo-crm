@@ -10,6 +10,7 @@ const TABS: Array<{ segment: string; label: string; permission?: Permission }> =
   { segment: 'seguridad', label: 'Seguridad' },
   { segment: 'equipo', label: 'Equipo', permission: 'member:read' },
   { segment: 'roles', label: 'Roles', permission: 'member:read' },
+  { segment: 'canales', label: 'Canales', permission: 'channel:manage' },
 ];
 
 export function SettingsNav({ slug }: { slug: string }) {

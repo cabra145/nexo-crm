@@ -11,7 +11,7 @@ import { Queue } from 'bullmq';
 import { API_ENV } from '../config/config.module';
 import { AuditService } from './audit.service';
 import { MailService } from './mail.service';
-import { AUDIT_QUEUE, EMAIL_QUEUE } from './queue-tokens';
+import { AUDIT_QUEUE, EMAIL_QUEUE, WHATSAPP_INBOUND_QUEUE } from './queue-tokens';
 
 /**
  * Colas en las que la API ENCOLA (el worker procesa).
@@ -52,14 +52,19 @@ class QueuesLifecycle implements OnApplicationShutdown {
   constructor(
     @Inject(EMAIL_QUEUE) private readonly email: Queue,
     @Inject(AUDIT_QUEUE) private readonly audit: Queue,
+    @Inject(WHATSAPP_INBOUND_QUEUE) private readonly whatsappInbound: Queue,
   ) {
-    for (const queue of [email, audit]) {
+    for (const queue of [email, audit, whatsappInbound]) {
       queue.on('error', (error) => this.logger.warn(`Cola ${queue.name}: ${error.message}`));
     }
   }
 
   async onApplicationShutdown(): Promise<void> {
-    await Promise.allSettled([this.email.close(), this.audit.close()]);
+    await Promise.allSettled([
+      this.email.close(),
+      this.audit.close(),
+      this.whatsappInbound.close(),
+    ]);
   }
 }
 
@@ -76,10 +81,15 @@ class QueuesLifecycle implements OnApplicationShutdown {
       inject: [API_ENV],
       useFactory: (env: ApiEnv) => createQueue(QUEUE_NAMES.AUDIT, env),
     },
+    {
+      provide: WHATSAPP_INBOUND_QUEUE,
+      inject: [API_ENV],
+      useFactory: (env: ApiEnv) => createQueue(QUEUE_NAMES.WHATSAPP_INBOUND, env),
+    },
     QueuesLifecycle,
     MailService,
     AuditService,
   ],
-  exports: [MailService, AuditService],
+  exports: [MailService, AuditService, WHATSAPP_INBOUND_QUEUE],
 })
 export class QueuesModule {}
