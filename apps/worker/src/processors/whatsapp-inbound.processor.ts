@@ -4,6 +4,7 @@ import {
   type MetaStatus,
   metaWebhookSchema,
   QUEUE_NAMES,
+  type RealtimeEvent,
   waIdToE164,
   whatsappInboundJobSchema,
 } from '@nexo/contracts';
@@ -16,6 +17,7 @@ import {
 } from '@nexo/database';
 import { UnrecoverableError } from 'bullmq';
 import { defineProcessor } from '../lib/processor';
+import { publishRealtime } from '../lib/realtime';
 
 /** Ventana de 24 h de Meta para responder con texto libre. */
 const WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -34,6 +36,12 @@ const STATUS_RANK: Record<MessageDeliveryStatus, number> = {
   READ: 3,
 };
 
+/**
+ * Cuánto se espera a que aparezca el mensaje de un estado que llega antes de
+ * tiempo (ver `applyStatus`).
+ */
+const PENDING_STATUS_WINDOW_MS = 2 * 60 * 1000;
+
 const META_STATUS: Record<string, MessageDeliveryStatus> = {
   sent: 'SENT',
   delivered: 'DELIVERED',
@@ -46,6 +54,20 @@ interface Summary {
   duplicates: number;
   statuses: number;
   newContacts: number;
+}
+
+/** Conversaciones que cambiaron, para avisar a la bandeja al confirmar. */
+type Touched = Map<string, RealtimeEvent>;
+
+function touch(
+  touched: Touched,
+  conversationId: string,
+  assigneeId: string | null,
+  reason: 'message' | 'delivery',
+): void {
+  // Un mensaje nuevo pesa más que un cambio de estado en el mismo evento.
+  if (touched.get(conversationId)?.reason === 'message') return;
+  touched.set(conversationId, { type: 'conversation', conversationId, assigneeId, reason });
 }
 
 /**
@@ -91,6 +113,7 @@ export const whatsappInboundProcessor = defineProcessor({
     });
 
     let summary: Summary;
+    const touched: Touched = new Map();
     try {
       summary = await runInTenantTransaction(async (tx) => {
         const channel = await tx.channel.findUnique({
@@ -113,7 +136,7 @@ export const whatsappInboundProcessor = defineProcessor({
                 `El evento es del número ${change.value.metadata?.phone_number_id ?? '?'}, no del de este canal`,
               );
             }
-            await ingestChange(tx, data.tenantId, channel.id, change.value, result);
+            await ingestChange(tx, data.tenantId, channel.id, change.value, result, touched);
           }
         }
         return result;
@@ -135,6 +158,9 @@ export const whatsappInboundProcessor = defineProcessor({
     }
 
     await finish(event.id, 'PROCESSED', null);
+    // Después de confirmar: un aviso de algo que luego se deshace haría que la
+    // web pidiera datos que aún no existen.
+    await publishRealtime(data.tenantId, [...touched.values()]);
     log.info({ webhookEventId: event.id, ...summary }, 'Evento de WhatsApp procesado');
     return summary;
   },
@@ -159,15 +185,24 @@ async function ingestChange(
   channelId: string,
   value: MetaChangeValue,
   result: Summary,
+  touched: Touched,
 ): Promise<void> {
   const names = new Map(
     (value.contacts ?? []).map((c) => [c.wa_id, c.profile?.name?.trim() || null]),
   );
   for (const message of value.messages ?? []) {
-    await ingestMessage(tx, tenantId, channelId, message, names.get(message.from) ?? null, result);
+    await ingestMessage(
+      tx,
+      tenantId,
+      channelId,
+      message,
+      names.get(message.from) ?? null,
+      result,
+      touched,
+    );
   }
   for (const status of value.statuses ?? []) {
-    await applyStatus(tx, channelId, status, result);
+    await applyStatus(tx, channelId, status, result, touched);
   }
 }
 
@@ -178,6 +213,7 @@ async function ingestMessage(
   message: MetaInboundMessage,
   profileName: string | null,
   result: Summary,
+  touched: Touched,
 ): Promise<void> {
   // Idempotencia: Meta reintenta, y un mismo `wamid` puede llegar en dos
   // eventos distintos. El índice único (canal, id externo) es la última red.
@@ -199,7 +235,13 @@ async function ingestMessage(
     where: { channelId_contactId: { channelId, contactId: contact.id } },
     create: { tenantId, channelId, contactId: contact.id, status: 'OPEN' },
     update: {},
-    select: { id: true, windowExpiresAt: true, createdAt: true, lastMessageAt: true },
+    select: {
+      id: true,
+      windowExpiresAt: true,
+      createdAt: true,
+      lastMessageAt: true,
+      assigneeId: true,
+    },
   });
 
   await tx.message.create({
@@ -261,6 +303,7 @@ async function ingestMessage(
     });
   }
   result.messages += 1;
+  touch(touched, conversation.id, conversation.assigneeId, 'message');
 }
 
 /**
@@ -324,16 +367,42 @@ async function applyStatus(
   channelId: string,
   status: MetaStatus,
   result: Summary,
+  touched: Touched,
 ): Promise<void> {
   const next = META_STATUS[status.status];
   if (!next) return;
   const message = await tx.message.findFirst({
     where: { channelId, externalId: status.id },
-    select: { id: true, status: true },
+    select: {
+      id: true,
+      status: true,
+      conversationId: true,
+      conversation: { select: { assigneeId: true } },
+    },
   });
-  // Estado de un mensaje que no es nuestro (enviado desde otra herramienta):
-  // no hay nada que actualizar.
-  if (!message) return;
+  if (!message) {
+    // Carrera con el envío: Meta puede avisar de «enviado» o «entregado» antes
+    // de que el worker de salida haya guardado el id que Meta le devolvió. Si
+    // hay un envío en curso en este canal y el aviso es reciente, se reintenta
+    // el evento más tarde (con la espera de la cola) en vez de perderlo.
+    const recent = Date.now() - Number(status.timestamp) * 1000 < PENDING_STATUS_WINDOW_MS;
+    const inFlight = recent
+      ? await tx.message.count({
+          where: {
+            channelId,
+            direction: 'OUTBOUND',
+            status: 'QUEUED',
+            createdAt: { gt: new Date(Date.now() - PENDING_STATUS_WINDOW_MS) },
+          },
+        })
+      : 0;
+    if (inFlight > 0) {
+      throw new Error(`Estado de ${status.id} antes de conocer el mensaje; se reintentará`);
+    }
+    // Estado de un mensaje que no es nuestro (enviado desde otra herramienta):
+    // no hay nada que actualizar.
+    return;
+  }
   if (STATUS_RANK[next] <= STATUS_RANK[message.status]) return;
 
   const error = status.errors?.[0];
@@ -351,6 +420,7 @@ async function applyStatus(
     },
   });
   result.statuses += 1;
+  touch(touched, message.conversationId, message.conversation.assigneeId, 'delivery');
 }
 
 /** Tipo del mensaje en Nexo y el texto que lo representa. */

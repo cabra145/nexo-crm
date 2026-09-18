@@ -109,6 +109,8 @@ export const PROBLEM_TYPES = {
   RATE_LIMITED: 'https://nexo.app/problems/demasiadas-peticiones',
   QUOTA_EXCEEDED: 'https://nexo.app/problems/limite-de-plan',
   INTERNAL: 'https://nexo.app/problems/error-interno',
+  /** Una dependencia (cola, proveedor) no responde; se puede reintentar. */
+  UNAVAILABLE: 'https://nexo.app/problems/no-disponible',
 } as const;
 
 /* ========================================================================== */

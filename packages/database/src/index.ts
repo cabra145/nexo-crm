@@ -19,6 +19,8 @@ export {
   type TenantTransactionClient,
 } from './client';
 
+export { encrypt, decrypt } from './encryption';
+
 export {
   runWithTenantContext,
   getTenantContext,

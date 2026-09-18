@@ -76,6 +76,10 @@ test('crear, buscar y editar un contacto', async ({ browser }) => {
   await edit.getByLabel('Cargo').fill('Jefa de compras');
   await edit.getByLabel('Etapa').selectOption({ label: 'Cliente' });
   await edit.getByRole('button', { name: 'Guardar' }).click();
+  // La ficha se actualiza un instante ANTES de que el diálogo se cierre: sin
+  // esperar al cierre, «Cliente» coincidía también con la opción del selector
+  // del diálogo, y la prueba fallaba o no según ese instante.
+  await expect(edit).toHaveCount(0);
   await expect(page.getByText('Jefa de compras').first()).toBeVisible();
   await expect(page.getByText('Cliente', { exact: true })).toBeVisible();
 

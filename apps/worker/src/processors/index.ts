@@ -2,6 +2,7 @@ import type { AnyProcessorDefinition } from '../lib/processor';
 import { auditProcessor } from './audit.processor';
 import { emailProcessor } from './email.processor';
 import { whatsappInboundProcessor } from './whatsapp-inbound.processor';
+import { whatsappOutboundProcessor } from './whatsapp-outbound.processor';
 
 /**
  * Procesadores activos. Añadir una cola nueva es escribir su procesador y
@@ -12,4 +13,5 @@ export const processors: AnyProcessorDefinition[] = [
   emailProcessor,
   auditProcessor,
   whatsappInboundProcessor,
+  whatsappOutboundProcessor,
 ];

@@ -1,7 +1,16 @@
 'use client';
 
 import type { Permission } from '@nexo/contracts';
-import { Building2, CheckSquare, Home, KanbanSquare, Settings, Users, X } from 'lucide-react';
+import {
+  Building2,
+  CheckSquare,
+  Home,
+  Inbox,
+  KanbanSquare,
+  Settings,
+  Users,
+  X,
+} from 'lucide-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { type ComponentType, useEffect } from 'react';
@@ -19,6 +28,13 @@ interface Item {
 
 const items = (slug: string): Item[] => [
   { href: `/w/${slug}`, label: 'Inicio', icon: Home },
+  {
+    href: `/w/${slug}/bandeja`,
+    label: 'Bandeja',
+    icon: Inbox,
+    permission: 'conversation:read',
+    prefix: true,
+  },
   {
     href: `/w/${slug}/contactos`,
     label: 'Contactos',

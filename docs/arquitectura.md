@@ -329,6 +329,46 @@ bloqueos por cuenta no se tocan.
 (`META_GRAPH_VERSION`, hoy `v21.0` por defecto) y los textos exactos de sus
 errores.
 
+### Bandeja de entrada y tiempo real — bloque 2.2
+
+| Decisión                                                                  | Por qué                                                                                                                                                                                                                                                               |
+| ------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Las nuevas llegan sin asignar y cualquiera las toma**                   | Una conversación sin asignar la ve todo el que puede ver conversaciones, sea cual sea su alcance; asignada, la ven quien la lleva y quien tiene alcance sobre esa persona. Responder a una sin asignar la toma: dos agentes no contestan al mismo cliente sin saberlo |
+| **Tomar es un UPDATE condicional**                                        | `WHERE assignee_id IS NULL` en la propia escritura: si dos la toman a la vez, una recibe 409. Sin bloqueos largos ni comprobar-y-luego-escribir                                                                                                                       |
+| **Asignar exige alcance sobre las dos personas**                          | Sobre quien la tenía y sobre quien la recibe, y el destinatario tiene que poder ver conversaciones                                                                                                                                                                    |
+| **Enviar no espera a Meta**                                               | La API guarda el mensaje en QUEUED y lo encola (`whatsapp-outbound`); el worker llama a Meta FUERA de cualquier transacción. Red, 5xx y límites de tasa se reintentan; un rechazo definitivo queda FAILED con el motivo de Meta y el agente puede reintentarlo        |
+| **La ventana de 24 h se comprueba en la API y se muestra en la interfaz** | Fuera de ella, 409 y nada llega a Meta; la pantalla lo dice antes de que el agente escriba                                                                                                                                                                            |
+| **SSE, no WebSocket**                                                     | Los avisos van en un solo sentido; SSE es HTTP normal (pasa por Nginx y balanceadores sin configuración especial)                                                                                                                                                     |
+| **Un aviso no lleva datos**                                               | Sólo «esta conversación cambió» y a quién está asignada. La web vuelve a pedirla por la API con sus permisos: el canal de avisos no puede filtrar nada, y no hay dos fuentes de verdad                                                                                |
+| **Avisos por Redis pub/sub**                                              | La API y el worker publican en el canal de la empresa; cada proceso de la API reparte a SUS conexiones. Funciona igual con una instancia que con varias                                                                                                               |
+| **Permisos en vivo en cada aviso**                                        | Antes de entregar un aviso se resuelve el acceso con la caché de siempre: a quien desactivan se le cierra la conexión en el siguiente aviso. Y la conexión se cierra al caducar el token; la web reconecta con el renovado                                            |
+| **`fetch` con streaming, no `EventSource`**                               | `EventSource` no permite la cabecera `Authorization`, y el token en la URL acabaría en logs                                                                                                                                                                           |
+| **Al (re)conectar se recarga todo**                                       | Lo que ocurriera durante un corte se recupera sin reproducir avisos perdidos                                                                                                                                                                                          |
+
+**El estado que llega antes que el mensaje.** Meta puede avisar de
+«entregado» antes de que el worker haya guardado el id que Meta le devolvió al
+enviar. Si ese aviso se ignorara, el mensaje se quedaría en «enviado» para
+siempre. Si llega el estado de un id desconocido, es reciente y hay un envío en
+curso en ese canal, el evento se reintenta con la espera de la cola. La prueba
+lo reproduce: el simulador retiene la respuesta del envío mientras envía el
+estado.
+
+**Idempotencia del envío.** Sólo se envía un mensaje en QUEUED, y el resultado
+se escribe con la condición «sigue en QUEUED». Queda una ventana inevitable
+(Meta acepta y el worker cae antes de guardarlo) en la que el reintento lo
+enviaría dos veces: Meta no ofrece clave de idempotencia.
+
+**Pruebas que se han visto fallar.** Sin la condición al tomar, dos agentes la
+tomaban a la vez (200 y 200). Con el reparto de avisos sin comprobar
+visibilidad, quien había perdido la conversación seguía recibiendo sus avisos,
+y quien era desactivado conservaba la conexión. Sin la espera del estado
+adelantado, el mensaje terminaba en SENT en vez de DELIVERED.
+
+**Una prueba intermitente del bloque 1.4, corregida.** «Crear, buscar y editar
+un contacto» fallaba a veces: la ficha se actualiza un instante antes de que el
+diálogo de edición se cierre, y «Cliente» coincidía también con la opción del
+selector del diálogo. La prueba ahora espera al cierre del diálogo.
+
 ### El particionado de `message` queda aplazado
 
 El plan lo daba por hecho desde el inicio. Prisma no puede crear una tabla

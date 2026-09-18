@@ -16,3 +16,5 @@ export * from './crm';
 export * from './tasks';
 export * from './deals';
 export * from './whatsapp';
+export * from './inbox';
+export * from './realtime';

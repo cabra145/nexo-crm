@@ -28,6 +28,12 @@ export const QUEUE_NAMES = {
    * conversación y el mensaje se hace aquí, con reintentos.
    */
   WHATSAPP_INBOUND: 'whatsapp-inbound',
+  /**
+   * Mensajes que un agente escribió en la bandeja. La API los guarda en cola
+   * (QUEUED) y responde al momento; el envío a Meta se hace aquí, con
+   * reintentos si Meta o la red fallan.
+   */
+  WHATSAPP_OUTBOUND: 'whatsapp-outbound',
 } as const;
 
 export type QueueName = (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES];
@@ -70,6 +76,16 @@ export const QUEUE_POLICIES: Record<
     keepCompleted: { hours: 6, max: 2_000 },
     keepFailed: { days: 30 },
     concurrency: 5,
+  },
+  'whatsapp-outbound': {
+    // Reintentos cortos: quien escribe está mirando la pantalla. Cinco
+    // intentos desde 2 s cubren ~1 minuto de Meta caído antes de marcarlo
+    // fallido, y el agente puede reintentarlo a mano.
+    attempts: 5,
+    backoffMs: 2_000,
+    keepCompleted: { hours: 6, max: 2_000 },
+    keepFailed: { days: 30 },
+    concurrency: 10,
   },
   audit: {
     // Sólo falla si la base de datos no responde. Se insiste bastante: perder
@@ -185,3 +201,14 @@ export const whatsappInboundJobSchema = z.object({
   channelId: uuidSchema,
 });
 export type WhatsappInboundJob = z.infer<typeof whatsappInboundJobSchema>;
+
+/* ========================================================================== */
+/*  Cola `whatsapp-outbound`                                                  */
+/* ========================================================================== */
+
+export const whatsappOutboundJobSchema = z.object({
+  /** Mensaje ya guardado en estado QUEUED. */
+  messageId: uuidSchema,
+  tenantId: uuidSchema,
+});
+export type WhatsappOutboundJob = z.infer<typeof whatsappOutboundJobSchema>;

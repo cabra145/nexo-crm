@@ -15,6 +15,8 @@ import { QueuesModule } from './queues/queues.module';
 import { RedisModule } from './redis/redis.module';
 import { CrmModule } from './crm/crm.module';
 import { WhatsappModule } from './whatsapp/whatsapp.module';
+import { InboxModule } from './inbox/inbox.module';
+import { RealtimeModule } from './realtime/realtime.module';
 import { PermissionGuard } from './team/permission.guard';
 import { TeamModule } from './team/team.module';
 import { TenantsModule } from './tenants/tenants.module';
@@ -112,6 +114,8 @@ const INCOMING_TRACE_ID = /^[A-Za-z0-9_-]{8,64}$/;
     TeamModule,
     CrmModule,
     WhatsappModule,
+    RealtimeModule,
+    InboxModule,
     TenantsModule,
   ],
   providers: [

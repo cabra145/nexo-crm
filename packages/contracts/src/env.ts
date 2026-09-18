@@ -160,6 +160,8 @@ export const workerEnvSchema = baseSchema.extend({
 
   OPENAI_API_KEY: z.string().optional(),
   META_GRAPH_VERSION: z.string().default('v21.0'),
+  /** Igual que en la API: el envío de mensajes lo hace el worker. */
+  META_GRAPH_URL: z.string().url().default('https://graph.facebook.com'),
 
   SENTRY_DSN: z.string().optional(),
 });
