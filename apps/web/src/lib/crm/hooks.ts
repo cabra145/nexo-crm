@@ -1,6 +1,6 @@
 'use client';
 
-import type { ListContactsQuery, ListTasksQuery } from '@nexo/contracts';
+import type { BoardQuery, ListContactsQuery, ListTasksQuery } from '@nexo/contracts';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { crmApi } from './api';
@@ -60,6 +60,21 @@ export const useNotes = (contactId: string) =>
 
 export const useTimeline = (contactId: string) =>
   useQuery({ queryKey: ['crm', 'timeline', contactId], queryFn: () => crmApi.timeline(contactId) });
+
+export const boardKey = (params: Partial<BoardQuery>) => ['crm', 'board', params] as const;
+
+export const useBoard = (params: Partial<BoardQuery>) =>
+  useQuery({ queryKey: boardKey(params), queryFn: () => crmApi.board(params) });
+
+export const useDeal = (id: string | null) =>
+  useQuery({
+    queryKey: ['crm', 'deal', id],
+    queryFn: () => crmApi.deal(id!),
+    enabled: Boolean(id),
+  });
+
+export const useLostReasons = () =>
+  useQuery({ queryKey: ['crm', 'lost-reasons'], queryFn: crmApi.lostReasons, staleTime: 300_000 });
 
 /** Espera a que el usuario deje de escribir antes de consultar. */
 export function useDebounced<T>(value: T, ms = 300): T {

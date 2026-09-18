@@ -171,10 +171,9 @@ test('un agente sólo ve sus contactos, también en la interfaz', async ({ brows
   const invitar = page.getByRole('dialog', { name: 'Invitar al equipo' });
   await invitar.getByLabel('Correo').fill(agente.email);
   await invitar.getByLabel('Rol').selectOption({ label: 'Agente' });
-  const desde = Date.now();
   await invitar.getByRole('button', { name: 'Enviar invitación' }).click();
   await expect(page.getByText(`Invitación enviada a ${agente.email}`)).toBeVisible();
-  const enlace = await linkFromMail(agente.email, 'te invita', desde);
+  const enlace = await linkFromMail(agente.email, 'te invita');
 
   // El agente acepta en su propio navegador y crea un contacto suyo.
   const agenteContext = await browser.newContext();

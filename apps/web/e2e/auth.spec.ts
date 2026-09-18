@@ -156,13 +156,12 @@ test('recuperar la contraseña con el enlace del correo', async ({ page }) => {
   await registerAndVerify(page, account);
   const newPassword = 'Recuperada-2026!';
 
-  const started = Date.now();
   await page.goto('/recuperar');
   await page.getByLabel('Correo').fill(account.email);
   await page.getByRole('button', { name: 'Enviar enlace' }).click();
   await expect(page.getByRole('heading', { name: 'Revisa tu correo' })).toBeVisible();
 
-  const link = await linkFromMail(account.email, 'Restablece', started);
+  const link = await linkFromMail(account.email, 'Restablece');
   await page.goto(link);
   await expect(page).not.toHaveURL(/token=/);
   await page.getByLabel('Contraseña nueva').fill(newPassword);

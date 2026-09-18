@@ -72,11 +72,10 @@ async function main(): Promise<void> {
 
   /** Alta completa: registro, correo, verificación e inicio de sesión. */
   async function registerOwner(who: string, company: string): Promise<Session> {
-    const t = Date.now();
     await http('POST', '/auth/register', {
       body: { name: `Dueño ${who}`, email: email(who), password: PASSWORD, companyName: company },
     });
-    const token = tokenFrom(await waitForMail(email(who), 'Confirma tu correo', t));
+    const token = tokenFrom(await waitForMail(email(who), 'Confirma tu correo'));
     await http('POST', '/auth/verify-email', { body: { token } });
     const login = await http('POST', '/auth/login', {
       body: { email: email(who), password: PASSWORD },
@@ -93,14 +92,13 @@ async function main(): Promise<void> {
     roleId: string,
     teamName?: string,
   ): Promise<{ res: HttpResult; membershipId: string; token: string | null }> {
-    const t = Date.now();
     const res = await http('POST', '/team/invitations', {
       ...as(by),
       body: { email: email(who), roleId, teamName },
     });
     const token =
       res.status === 200 || res.status === 201
-        ? tokenFrom(await waitForMail(email(who), 'te invita', t))
+        ? tokenFrom(await waitForMail(email(who), 'te invita'))
         : null;
     return { res, membershipId: res.body.membershipId as string, token };
   }
@@ -306,19 +304,13 @@ async function main(): Promise<void> {
     );
 
     const resendTarget = pending[1]!.body;
-    const firstToken = tokenFrom(
-      await waitForMail(resendTarget.email as string, 'te invita', Date.now() - 30_000),
-    );
-    // waitForMail tolera 2 s de desfase de reloj: se espera más que eso para
-    // que el correo reenviado no se confunda con el primero.
-    await new Promise((r) => setTimeout(r, 2_500));
-    const t2 = Date.now();
+    const firstToken = tokenFrom(await waitForMail(resendTarget.email as string, 'te invita'));
     const resent = await http(
       'POST',
       `/team/invitations/${resendTarget.membershipId as string}/resend`,
       as(owner),
     );
-    const secondToken = tokenFrom(await waitForMail(resendTarget.email as string, 'te invita', t2));
+    const secondToken = tokenFrom(await waitForMail(resendTarget.email as string, 'te invita'));
     const oldPreview = await http('POST', '/invitations/preview', { body: { token: firstToken } });
     const newPreview = await http('POST', '/invitations/preview', { body: { token: secondToken } });
     check(

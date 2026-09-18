@@ -34,11 +34,10 @@ async function invite(page: Page, slug: string, email: string, role: string, tea
   await dialog.getByLabel('Correo').fill(email);
   await dialog.getByLabel('Rol').selectOption({ label: role });
   if (team) await dialog.getByLabel('Equipo (opcional)').fill(team);
-  const started = Date.now();
   await dialog.getByRole('button', { name: 'Enviar invitación' }).click();
   await expect(page.getByText(`Invitación enviada a ${email}`)).toBeVisible();
   await expect(page.getByTestId(`invitacion-${email}`)).toBeVisible();
-  return linkFromMail(email, 'te invita', started);
+  return linkFromMail(email, 'te invita');
 }
 
 test('invitar con cuenta nueva, cambiar el rol y quitar el acceso', async ({ browser }) => {

@@ -26,24 +26,30 @@ interface MailpitMessage {
   ID: string;
   Subject: string;
   To: Array<{ Address: string }>;
-  Created: string;
 }
 
-/** Espera el correo más reciente para `to` cuyo asunto contenga `subject` y devuelve el enlace. */
-export async function linkFromMail(to: string, subject: string, after: number): Promise<string> {
+/**
+ * Correos ya leídos. Uno «nuevo» es uno que la prueba no ha consumido, no uno
+ * con hora posterior: la hora de Mailpit (en la máquina virtual de Docker) y
+ * la del sistema se desfasan tras una suspensión del equipo.
+ */
+const consumed = new Set<string>();
+
+/** Espera el correo más reciente, aún no leído, para `to` y devuelve su enlace. */
+export async function linkFromMail(to: string, subject: string): Promise<string> {
   // 30 s: el correo pasa por la cola y el worker, que en una máquina cargada
   // pueden tardar bastante más de lo habitual.
   const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
-    const res = await fetch(`${MAILPIT}/api/v1/messages?limit=100`);
+    // Mailpit devuelve primero los más recientes.
+    const res = await fetch(`${MAILPIT}/api/v1/messages?limit=200`);
     const { messages = [] } = (await res.json()) as { messages?: MailpitMessage[] };
     const found = messages.find(
       (m) =>
-        m.To.some((t) => t.Address === to) &&
-        m.Subject.includes(subject) &&
-        new Date(m.Created).getTime() >= after - 2_000,
+        !consumed.has(m.ID) && m.To.some((t) => t.Address === to) && m.Subject.includes(subject),
     );
     if (found) {
+      consumed.add(found.ID);
       const detail = (await (await fetch(`${MAILPIT}/api/v1/message/${found.ID}`)).json()) as {
         Text: string;
       };
@@ -107,7 +113,6 @@ export async function freshTotp(secret: string, usedSteps: Set<number>): Promise
 
 /** Registro por la interfaz + verificación con el enlace del correo. Devuelve el slug. */
 export async function registerAndVerify(page: Page, account: Account): Promise<void> {
-  const started = Date.now();
   await page.goto('/registro');
   await page.getByLabel('Tu nombre').fill(account.name);
   await page.getByLabel('Correo de trabajo').fill(account.email);
@@ -118,7 +123,7 @@ export async function registerAndVerify(page: Page, account: Account): Promise<v
   await expect(page).toHaveURL(/\/registro\/revisa-tu-correo$/);
   await expect(page.getByText(account.email)).toBeVisible();
 
-  await page.goto(await linkFromMail(account.email, 'Confirma', started));
+  await page.goto(await linkFromMail(account.email, 'Confirma'));
   await expect(page.getByRole('heading', { name: 'Correo confirmado' })).toBeVisible();
   // El token de un solo uso no se queda en la barra de direcciones.
   await expect(page).not.toHaveURL(/token=/);

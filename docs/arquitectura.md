@@ -259,6 +259,38 @@ y Docker a la vez), no el producto. Playwright tiene ahora un reintento y
 tiempos más holgados: un fallo real vuelve a fallar en el reintento, la
 lentitud no.
 
+### Embudo de ventas y tablero Kanban — bloque 1.5
+
+| Decisión                                                              | Por qué                                                                                                                                                                                                         |
+| --------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **La posición la calcula el servidor**                                | El cliente manda entre qué dos tarjetas suelta, nunca un número. El servidor toma el punto medio con la columna bloqueada, así que dos personas moviendo a la vez no escriben órdenes incompatibles             |
+| **Mover escribe una sola fila; reequilibrar, sólo cuando hace falta** | Cuando el hueco entre dos vecinas baja de 0,0001, se renumera la columna entera con `rebalance_stage_positions` y se recalcula. `deals:e2e` parte el mismo hueco 60 veces y exige orden correcto y cero empates |
+| **Arrastrar a «Ganado» o «Perdido» cierra la oportunidad**            | Y devolverla a una etapa abierta la reabre y borra el motivo. Es lo que espera quien arrastra, sin obligarle a cambiar además un estado aparte                                                                  |
+| **Historial de etapas desde el primer día**                           | Cada cambio de etapa cierra el tramo anterior con su duración. Sin eso, «cuánto tarda una oportunidad en negociación» no se puede reconstruir después                                                           |
+| **El tablero se mueve al instante**                                   | Actualización optimista con reversión si la API lo rechaza (por ejemplo, si otra persona movió la vecina mientras arrastrabas: 409)                                                                             |
+| **Arrastrar no es la única forma**                                    | Cada tarjeta tiene un selector «Mover a…», que funciona con teclado, lector de pantalla y pantalla táctil                                                                                                       |
+| **Alcance por rol sobre `ownerId`**                                   | Tarjetas y totales de columna salen ya filtrados: un agente no ve cuánto vale el embudo de los demás                                                                                                            |
+
+**Una prueba que no probaba lo que decía.** La primera versión de `deals:e2e`
+movía la misma tarjeta una y otra vez entre las mismas dos vecinas y daba por
+bueno el reequilibrio. Pero ese punto medio no cambia nunca: el hueco no se
+agotaba y el reequilibrio no llegaba a ejecutarse (separación mínima final de
+500). Ahora la prueba alterna dos tarjetas detrás de la misma vecina, comprueba
+que el hueco bajó de verdad (6·10⁻⁵) y, con el reequilibrio desactivado a
+propósito, falla: orden roto y dos posiciones empatadas.
+
+**El Mac dormido.** Una ejecución falló porque el equipo entró en reposo a
+mitad de la prueba (visto en `pmset -g log`: 21:09:37 → 21:15:45, los mismos
+375 s que faltaban en el registro de la API). Dos arreglos: `ci-local` mantiene
+el equipo despierto con `caffeinate`, y las pruebas ya no comparan la hora de
+Mailpit (en la máquina virtual de Docker) con la del sistema. Un correo nuevo
+es uno aún no leído, no uno con hora posterior.
+
+**Pendiente, a propósito:** la configuración de embudos y etapas desde la
+interfaz (`pipeline:manage`) y la sección de oportunidades en la ficha del
+contacto llegan con los paneles comerciales. Hoy el contacto ya guarda en su
+historia la creación de sus oportunidades y cada cambio de etapa.
+
 ### El particionado de `message` queda aplazado
 
 El plan lo daba por hecho desde el inicio. Prisma no puede crear una tabla

@@ -185,6 +185,9 @@ pnpm --silent --filter @nexo/api rbac:e2e || fail "rbac:e2e"
 step "CRM de extremo a extremo (alcance por rol, cuotas, búsqueda)"
 pnpm --silent --filter @nexo/api crm:e2e || fail "crm:e2e"
 
+step "Embudo de ventas de extremo a extremo (orden del tablero y reequilibrio)"
+pnpm --silent --filter @nexo/api deals:e2e || fail "deals:e2e"
+
 step "Prueba de humo del worker"
 pnpm --silent --filter @nexo/worker smoke || fail "prueba de humo"
 # Un reintento idempotente es un caso normal, no un error: no puede dejar

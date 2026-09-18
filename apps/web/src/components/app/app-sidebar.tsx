@@ -1,7 +1,7 @@
 'use client';
 
 import type { Permission } from '@nexo/contracts';
-import { Building2, CheckSquare, Home, Settings, Users, X } from 'lucide-react';
+import { Building2, CheckSquare, Home, KanbanSquare, Settings, Users, X } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { type ComponentType, useEffect } from 'react';
@@ -31,6 +31,13 @@ const items = (slug: string): Item[] => [
     label: 'Empresas',
     icon: Building2,
     permission: 'company:read',
+    prefix: true,
+  },
+  {
+    href: `/w/${slug}/embudo`,
+    label: 'Embudo',
+    icon: KanbanSquare,
+    permission: 'deal:read',
     prefix: true,
   },
   {

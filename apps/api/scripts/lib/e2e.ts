@@ -72,27 +72,40 @@ interface MailpitMessage {
   ID: string;
   Subject: string;
   To: Array<{ Address: string }>;
-  Created: string;
 }
 
-/** Espera un correo para `to` cuyo asunto contenga `subject`, más nuevo que `after`. */
+/**
+ * Correos ya leídos por esta ejecución. Un correo «nuevo» es uno que la
+ * prueba todavía no ha consumido, no uno con una hora posterior.
+ *
+ * Antes se comparaba la hora de Mailpit con la del sistema: son dos relojes
+ * distintos (Mailpit corre en la máquina virtual de Docker) y tras una
+ * suspensión del equipo se desfasan, así que el correo correcto quedaba
+ * descartado por «antiguo». Las direcciones son únicas por ejecución, así que
+ * basta con no repetir correos.
+ */
+const consumed = new Set<string>();
+
+/**
+ * Espera el correo MÁS RECIENTE, aún no leído, para `to` cuyo asunto contenga
+ * `subject`, y lo marca como leído.
+ */
 export async function waitForMail(
   to: string,
   subject: string,
-  after: number,
   timeoutMs = 15_000,
 ): Promise<string | null> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const res = await fetch(`${MAILPIT}/api/v1/messages?limit=100`);
+    // Mailpit devuelve primero los más recientes.
+    const res = await fetch(`${MAILPIT}/api/v1/messages?limit=200`);
     const body = (await res.json()) as { messages?: MailpitMessage[] };
     const found = body.messages?.find(
       (m) =>
-        m.To.some((t) => t.Address === to) &&
-        m.Subject.includes(subject) &&
-        new Date(m.Created).getTime() >= after - 2_000,
+        !consumed.has(m.ID) && m.To.some((t) => t.Address === to) && m.Subject.includes(subject),
     );
     if (found) {
+      consumed.add(found.ID);
       const detail = (await (await fetch(`${MAILPIT}/api/v1/message/${found.ID}`)).json()) as {
         Text: string;
       };

@@ -1,5 +1,13 @@
 import type {
   ActivityView,
+  BoardQuery,
+  BoardView,
+  DealCreateInput,
+  DealDetail,
+  DealLoseInput,
+  DealMoveInput,
+  DealUpdateInput,
+  LostReasonView,
   CompanyCreateInput,
   CompanyDetail,
   CompanyListItem,
@@ -97,6 +105,36 @@ export const crmApi = {
     apiFetch<NoteView>(`/notes/${id}`, { method: 'PATCH', body: { body }, auth: true }),
 
   deleteNote: (id: string) => apiFetch<void>(`/notes/${id}`, { method: 'DELETE', auth: true }),
+
+  /* --- Embudo --------------------------------------------------------------- */
+
+  board: (params: Partial<BoardQuery> = {}) =>
+    apiFetch<BoardView>(`/board${query(params)}`, { auth: true }),
+
+  deal: (id: string) => apiFetch<DealDetail>(`/deals/${id}`, { auth: true }),
+
+  createDeal: (input: DealCreateInput) =>
+    apiFetch<DealDetail>('/deals', { method: 'POST', body: input, auth: true }),
+
+  updateDeal: (id: string, input: DealUpdateInput) =>
+    apiFetch<DealDetail>(`/deals/${id}`, { method: 'PATCH', body: input, auth: true }),
+
+  moveDeal: (id: string, input: DealMoveInput) =>
+    apiFetch<DealDetail>(`/deals/${id}/move`, { method: 'POST', body: input, auth: true }),
+
+  winDeal: (id: string, value?: number) =>
+    apiFetch<DealDetail>(`/deals/${id}/win`, {
+      method: 'POST',
+      body: value === undefined ? {} : { value },
+      auth: true,
+    }),
+
+  loseDeal: (id: string, input: DealLoseInput) =>
+    apiFetch<DealDetail>(`/deals/${id}/lose`, { method: 'POST', body: input, auth: true }),
+
+  deleteDeal: (id: string) => apiFetch<void>(`/deals/${id}`, { method: 'DELETE', auth: true }),
+
+  lostReasons: () => apiFetch<LostReasonView[]>('/lost-reasons', { auth: true }),
 
   timeline: (contactId: string) =>
     apiFetch<ActivityView[]>(`/contacts/${contactId}/historia`, { auth: true }),

@@ -74,12 +74,11 @@ async function main(): Promise<void> {
   const tenantIds: string[] = [];
 
   async function registerOwner(who: string, company: string): Promise<Session> {
-    const t = Date.now();
     await http('POST', '/auth/register', {
       body: { name: `Dueña ${who}`, email: email(who), password: PASSWORD, companyName: company },
     });
     await http('POST', '/auth/verify-email', {
-      body: { token: tokenFrom(await waitForMail(email(who), 'Confirma tu correo', t)) },
+      body: { token: tokenFrom(await waitForMail(email(who), 'Confirma tu correo')) },
     });
     const login = await http('POST', '/auth/login', {
       body: { email: email(who), password: PASSWORD },
@@ -96,7 +95,6 @@ async function main(): Promise<void> {
     roleId: string,
     teamName?: string,
   ): Promise<Session> {
-    const t = Date.now();
     const invited = await http('POST', '/team/invitations', {
       ...as(by),
       body: { email: email(who), roleId, teamName },
@@ -104,7 +102,7 @@ async function main(): Promise<void> {
     if (invited.status !== 201) {
       throw new Error(`invitación de ${who} → ${invited.status} ${JSON.stringify(invited.body)}`);
     }
-    const token = tokenFrom(await waitForMail(email(who), 'te invita', t));
+    const token = tokenFrom(await waitForMail(email(who), 'te invita'));
     const accepted = await http('POST', '/invitations/accept-new', {
       body: { token, name: `Equipo ${who}`, password: PASSWORD },
     });

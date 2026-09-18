@@ -30,6 +30,14 @@ teardown() {
 }
 trap teardown EXIT
 
+# En macOS, el equipo no se duerme mientras dura la prueba. Se vio fallar por
+# eso: el Mac entró en reposo a mitad de ejecución, la prueba quedó parada seis
+# minutos y, al despertar, los tiempos de espera ya habían vencido.
+# `caffeinate -w` se retira solo cuando termina este script.
+if command -v caffeinate >/dev/null 2>&1; then
+  caffeinate -i -w $$ &
+fi
+
 for port in $PG_PORT $REDIS_PORT $SMTP_PORT $MAILPIT_PORT 44000 44100 43000; do
   if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
     echo "El puerto $port está ocupado. Libéralo o detén la ejecución anterior." >&2

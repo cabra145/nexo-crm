@@ -12,7 +12,8 @@
     "crypto:selftest": "tsx scripts/crypto-selftest.ts",
     "auth:e2e": "tsx scripts/auth-e2e.ts",
     "rbac:e2e": "tsx scripts/rbac-e2e.ts",
-    "crm:e2e": "tsx scripts/crm-e2e.ts"
+    "crm:e2e": "tsx scripts/crm-e2e.ts",
+    "deals:e2e": "tsx scripts/deals-e2e.ts"
   },
   "dependencies": {
     "@nestjs/common": "11.2.5",

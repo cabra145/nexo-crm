@@ -62,11 +62,10 @@ async function main(): Promise<void> {
       `${weak.status}`,
     );
 
-    const t0 = Date.now();
     const reg = await http('POST', '/auth/register', { body: owner1 });
     check('el registro se acepta', reg.status === 202, `${reg.status}`);
 
-    const verifyText = await waitForMail(owner1.email, 'Confirma tu correo', t0);
+    const verifyText = await waitForMail(owner1.email, 'Confirma tu correo');
     const verifyToken = tokenFrom(verifyText);
     check('llega el correo de confirmación, con enlace', Boolean(verifyToken));
     // Sin ese enlace no hay prueba que seguir, y continuar sólo produce
@@ -88,7 +87,6 @@ async function main(): Promise<void> {
       `${early.status}`,
     );
 
-    const t1 = Date.now();
     const dup = await http('POST', '/auth/register', {
       body: { ...owner1, name: 'Intruso', companyName: 'Otra' },
     });
@@ -98,7 +96,7 @@ async function main(): Promise<void> {
     );
     check(
       '…y al dueño le llega un aviso por correo',
-      Boolean(await waitForMail(owner1.email, 'Ya tienes una cuenta', t1)),
+      Boolean(await waitForMail(owner1.email, 'Ya tienes una cuenta')),
     );
 
     /* ---------------------------------------------------------------------- */
@@ -322,7 +320,6 @@ async function main(): Promise<void> {
     });
     check('activarlo con un código incorrecto → 401', badEnable.status === 401);
     const enableCode = totpFor(setup.body.secret);
-    const t2 = Date.now();
     const enabled = await http<{
       recoveryCodes: string[];
       session: { twoFactor: { enabled: boolean } };
@@ -346,10 +343,7 @@ async function main(): Promise<void> {
       (await http('POST', '/auth/refresh', { cookie: preTwoFactorCookie, client: true })).status ===
         401,
     );
-    check(
-      'se avisa por correo',
-      Boolean(await waitForMail(owner1.email, 'dos pasos activado', t2)),
-    );
+    check('se avisa por correo', Boolean(await waitForMail(owner1.email, 'dos pasos activado')));
 
     const step1 = await http<{ requiresTwoFactor: boolean; challengeToken: string }>(
       'POST',
@@ -407,9 +401,8 @@ async function main(): Promise<void> {
 
     /* ---------------------------------------------------------------------- */
     section('7 · Plazo del 2FA obligatorio del propietario');
-    const t3 = Date.now();
     await http('POST', '/auth/register', { body: owner2 });
-    const token2 = tokenFrom(await waitForMail(owner2.email, 'Confirma tu correo', t3));
+    const token2 = tokenFrom(await waitForMail(owner2.email, 'Confirma tu correo'));
     await http('POST', '/auth/verify-email', { body: { token: token2 } });
     const user2 = await db.user.findUniqueOrThrow({ where: { email: owner2.email } });
     // Se simula que entró hace 8 días: el plazo de 7 venció.
@@ -439,7 +432,6 @@ async function main(): Promise<void> {
     const unknownForgot = await http('POST', '/auth/password/forgot', {
       body: { email: `nadie-${run}@nexo.test` },
     });
-    const t4 = Date.now();
     const knownForgot = await http('POST', '/auth/password/forgot', {
       body: { email: owner2.email },
     });
@@ -448,7 +440,7 @@ async function main(): Promise<void> {
       unknownForgot.status === 202 &&
         JSON.stringify(unknownForgot.body) === JSON.stringify(knownForgot.body),
     );
-    const resetToken = tokenFrom(await waitForMail(owner2.email, 'Restablece tu contraseña', t4));
+    const resetToken = tokenFrom(await waitForMail(owner2.email, 'Restablece tu contraseña'));
     check('llega el enlace', Boolean(resetToken));
 
     const cookieBeforeReset = late.refreshCookie;
