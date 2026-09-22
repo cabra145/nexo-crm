@@ -1370,6 +1370,7 @@ model Message {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   @@unique([channelId, externalId], map: "message_channel_external_key")
+  @@unique([tenantId, id])
   @@index([tenantId, conversationId, createdAt(sort: Desc)])
   @@index([tenantId, status, createdAt])
   @@index([conversationId, createdAt(sort: Desc)])
@@ -1408,10 +1409,16 @@ model MessageMedia {
   id        String  @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
   tenantId  String  @map("tenant_id") @db.Uuid
   messageId String  @map("message_id") @db.Uuid
-  message   Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  /// Claves foráneas COMPUESTAS (tenant_id, id): el mensaje y el archivo
+  /// tienen que ser de la MISMA empresa. Una FK simple se comprueba sin RLS, y
+  /// dejaría colgar el adjunto de una empresa del archivo de otra.
+  message   Message @relation(fields: [tenantId, messageId], references: [tenantId, id], onDelete: Cascade)
 
   fileId String? @map("file_id") @db.Uuid
-  file   File?   @relation(fields: [fileId], references: [id], onDelete: SetNull)
+  /// NoAction y no SetNull: con la clave compuesta, SetNull vaciaría también
+  /// tenant_id. Un archivo enlazado no se borra suelto (se marca borrado);
+  /// al borrar la empresa, se van los dos en la misma operación.
+  file   File?   @relation(fields: [tenantId, fileId], references: [tenantId, id], onDelete: NoAction)
 
   /// Id del medio en Meta. Su URL de descarga caduca en minutos: por eso un
   /// trabajo aparte lo baja y lo sube a nuestro almacenamiento.
@@ -1430,6 +1437,7 @@ model MessageMedia {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   @@index([tenantId, messageId])
+  @@index([tenantId, fileId])
   @@map("message_media")
 }
 
@@ -2497,6 +2505,14 @@ model File {
 
   purpose FilePurpose @default(ATTACHMENT)
 
+  /// PENDING: reservado, a la espera de que llegue el contenido (subida
+  /// directa desde el navegador o descarga de Meta). READY: comprobado (tipo
+  /// real, tamaño) y utilizable. REJECTED: no pasó la comprobación; el objeto
+  /// se borra. Sólo un READY se firma para descarga o se envía.
+  status       FileStatus @default(PENDING)
+  readyAt      DateTime?  @map("ready_at") @db.Timestamptz(6)
+  rejectReason String?    @map("reject_reason") @db.VarChar(300)
+
   uploadedById String? @map("uploaded_by_id") @db.Uuid
   uploadedBy   User?   @relation(fields: [uploadedById], references: [id], onDelete: SetNull)
 
@@ -2510,12 +2526,17 @@ model File {
   createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
 
+  @@unique([tenantId, id])
   @@index([tenantId, purpose, createdAt(sort: Desc)])
   @@index([tenantId, deletedAt])
+  /// La limpieza de subidas abandonadas (PENDING antiguos), de todas las empresas.
+  @@index([status, createdAt])
   @@map("file")
 }
 
 enum FilePurpose {
+  /// Adjuntos de WhatsApp, entrantes y salientes.
+  WHATSAPP_MEDIA
   ATTACHMENT
   AVATAR
   LOGO
@@ -2523,6 +2544,12 @@ enum FilePurpose {
   AI_SOURCE
   IMPORT
   EXPORT
+}
+
+enum FileStatus {
+  PENDING
+  READY
+  REJECTED
 }
 
 enum ScanStatus {

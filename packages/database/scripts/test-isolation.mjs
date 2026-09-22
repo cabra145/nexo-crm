@@ -66,6 +66,29 @@ async function expectRejected(client, name, fn) {
   }
 }
 
+/**
+ * Espera que `fn` choque con UNA clave foránea concreta (SQLSTATE 23503). Igual
+ * que en `expectRejected`: cualquier otro error no prueba nada y es un fallo.
+ */
+async function expectForeignKeyRejected(client, name, constraint, fn) {
+  await client.query('SAVEPOINT intento');
+  try {
+    await fn();
+    await client.query('ROLLBACK TO SAVEPOINT intento');
+    check(name, false, 'la base lo PERMITIÓ');
+  } catch (error) {
+    await client.query('ROLLBACK TO SAVEPOINT intento');
+    const byConstraint = error.code === '23503' && error.constraint === constraint;
+    check(
+      name,
+      byConstraint,
+      byConstraint
+        ? `rechazado por ${constraint}`
+        : `falló por OTRO motivo, así que no prueba nada: ${error.message.split('\n')[0]}`,
+    );
+  }
+}
+
 /** Ejecuta `fn` y espera que funcione; deshace lo que haga. */
 async function expectAllowed(client, name, fn) {
   await client.query('SAVEPOINT control');
@@ -360,6 +383,112 @@ async function main() {
         [acmeChannel],
       );
       check('con identidad de webhook no se puede modificar el canal', renamed === 0);
+    } finally {
+      await app.query('ROLLBACK');
+    }
+  }
+
+  console.log('\n8c · Archivos y adjuntos: cada uno de su empresa, y sin cruzarse');
+  {
+    await app.query('BEGIN');
+    try {
+      const as = (tenantId) =>
+        app.query(`SELECT set_config('app.tenant_id', $1, true)`, [tenantId]);
+      const insertFile = async (tenantId, name) => {
+        await as(tenantId);
+        const { rows } = await app.query(
+          `INSERT INTO file (tenant_id, storage_key, original_name, mime_type, size_bytes)
+           VALUES ($1, $2, $3, 'image/jpeg', 10) RETURNING id, status`,
+          [tenantId, `tenants/${tenantId}/attachment/iso-${Date.now()}-${name}.jpg`, name],
+        );
+        return rows[0];
+      };
+      const acmeFile = await insertFile(acme, 'acme');
+      const borealFile = await insertFile(boreal, 'boreal');
+      check('un archivo nuevo nace PENDING (sin comprobar)', acmeFile.status === 'PENDING');
+
+      // Un mensaje de Acme donde colgar los adjuntos.
+      await as(acme);
+      const {
+        rows: [contact],
+      } = await app.query('SELECT id FROM contact LIMIT 1');
+      const {
+        rows: [channel],
+      } = await app.query(
+        `INSERT INTO channel (tenant_id, type, name, external_id, updated_at)
+         VALUES ($1, 'WHATSAPP_CLOUD', 'Prueba', $2, now()) RETURNING id`,
+        [acme, `iso-media-${Date.now()}`],
+      );
+      const {
+        rows: [conversation],
+      } = await app.query(
+        `INSERT INTO conversation (tenant_id, channel_id, contact_id, updated_at)
+         VALUES ($1, $2, $3, now()) RETURNING id`,
+        [acme, channel.id, contact.id],
+      );
+      const {
+        rows: [message],
+      } = await app.query(
+        `INSERT INTO message (tenant_id, conversation_id, channel_id, direction, type)
+         VALUES ($1, $2, $3, 'INBOUND', 'IMAGE') RETURNING id`,
+        [acme, conversation.id, channel.id],
+      );
+
+      check(
+        'Acme ve su archivo y no el de Boreal, ni pidiéndolo por su id',
+        (await count(app, 'SELECT count(*) n FROM file WHERE id = $1', [acmeFile.id])) === 1 &&
+          (await count(app, 'SELECT count(*) n FROM file WHERE id = $1', [borealFile.id])) === 0,
+      );
+      await expectRejected(app, 'Acme no puede crear un archivo a nombre de Boreal', () =>
+        app.query(
+          `INSERT INTO file (tenant_id, storage_key, original_name, mime_type, size_bytes)
+           VALUES ($1, $2, 'x.jpg', 'image/jpeg', 1)`,
+          [boreal, `tenants/${boreal}/attachment/iso-cruzado-${Date.now()}.jpg`],
+        ),
+      );
+      const { rowCount: stolen } = await app.query(
+        `UPDATE file SET status = 'READY' WHERE id = $1`,
+        [borealFile.id],
+      );
+      check('Acme no puede marcar como listo un archivo de Boreal', stolen === 0);
+
+      // La clave foránea se comprueba SIN RLS: sin la clave compuesta, el
+      // adjunto de Acme podría apuntar al archivo de Boreal conociendo su id.
+      await expectForeignKeyRejected(
+        app,
+        'un adjunto de Acme no puede apuntar al archivo de Boreal',
+        'message_media_tenant_id_file_id_fkey',
+        () =>
+          app.query(
+            `INSERT INTO message_media (tenant_id, message_id, file_id) VALUES ($1, $2, $3)`,
+            [acme, message.id, borealFile.id],
+          ),
+      );
+      await expectAllowed(app, 'control: con su propio archivo, SÍ', () =>
+        app.query(
+          `INSERT INTO message_media (tenant_id, message_id, file_id) VALUES ($1, $2, $3)`,
+          [acme, message.id, acmeFile.id],
+        ),
+      );
+
+      // Y al revés: Boreal no cuelga un adjunto del mensaje de Acme.
+      await as(boreal);
+      await expectForeignKeyRejected(
+        app,
+        'un adjunto de Boreal no puede colgar del mensaje de Acme',
+        'message_media_tenant_id_message_id_fkey',
+        () =>
+          app.query(
+            `INSERT INTO message_media (tenant_id, message_id, file_id) VALUES ($1, $2, $3)`,
+            [boreal, message.id, borealFile.id],
+          ),
+      );
+      check(
+        'Boreal no ve los adjuntos de Acme',
+        (await count(app, 'SELECT count(*) n FROM message_media WHERE message_id = $1', [
+          message.id,
+        ])) === 0,
+      );
     } finally {
       await app.query('ROLLBACK');
     }

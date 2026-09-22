@@ -389,6 +389,22 @@ conoce. Pasar a S3 o a MinIO es cambiar variables de entorno.
 | **El bucket de producción se crea a mano**                          | `ensure-bucket` sólo actúa sobre MinIO: crear buckets exigiría dar a la aplicación permisos de administración                                                               |
 | **MinIO en el CI como paso, no como servicio**                      | Los servicios de GitHub Actions no admiten el comando del contenedor (`server /data`)                                                                                       |
 
+**Ciclo de vida de un archivo.** `file.status`: PENDING (reservado, a la
+espera del contenido) → READY (tipo real y tamaño comprobados) o REJECTED.
+Sólo un READY se firma para descarga o se envía. Los PENDING antiguos son
+subidas abandonadas, y la limpieza periódica los borra; por eso la migración
+pasa a READY los archivos que ya existían.
+
+**Un agujero entre empresas, cerrado.** `message_media` apuntaba a `message` y
+a `file` con claves foráneas simples, que Postgres comprueba SIN RLS: un
+adjunto de una empresa podía enlazarse al archivo (o al mensaje) de otra
+conociendo su id. Ahora son compuestas `(tenant_id, id)`, como
+`role_permission`. La prueba de aislamiento lo intenta en los dos sentidos y
+sólo acepta como rechazo el error de esa clave concreta; con las claves
+simples de antes, las dos comprobaciones fallan. La FK a `file` es NO ACTION y
+no SET NULL, porque con la clave compuesta SET NULL vaciaría también
+`tenant_id`.
+
 **Dos correcciones de este paso.** La regla `storage/` de `.gitignore`, de la
 plantilla inicial, ignoraba también `packages/storage`: ahora sólo aplica en
 la raíz. Y la autoprueba del texto UTF-8 construía bytes que no eran UTF-8
