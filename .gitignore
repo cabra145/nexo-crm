@@ -46,7 +46,8 @@ infra/.volumes/
 
 # artefactos generados
 apps/api/openapi.json
-storage/
+# Sólo en la raíz: sin la barra inicial también ignoraba packages/storage.
+/storage/
 
 # logs de la prueba de integración (infra/scripts/ci-integration.sh)
 .ci-logs/

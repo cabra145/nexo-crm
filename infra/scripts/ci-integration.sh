@@ -113,6 +113,9 @@ wait_for() {
 step "Criptografía contra vectores oficiales (RFC 4226, 6238, 4648)"
 pnpm --silent --filter @nexo/api crypto:selftest || fail "crypto:selftest"
 
+step "Almacenamiento: tipos reales, claves por empresa y configuración por proveedor"
+pnpm --silent --filter @nexo/storage selftest || fail "storage selftest"
+
 # --- 1 · Base de datos --------------------------------------------------------
 step "Rol de aplicación"
 pnpm --silent --filter @nexo/database create-app-role || fail "no se pudo crear el rol nexo_app"
