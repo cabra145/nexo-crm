@@ -7,6 +7,7 @@ import { UnrecoverableError, Worker } from 'bullmq';
 import { startHealthServer } from './lib/health-server';
 import { logger } from './lib/logger';
 import { runProcessor } from './lib/processor';
+import { closeQueues } from './lib/queues';
 import { closeRealtime } from './lib/realtime';
 import { createRedisConnection } from './lib/redis';
 import { checkStorage } from './lib/storage';
@@ -106,6 +107,7 @@ async function main(): Promise<void> {
     await Promise.allSettled(workers.map((w) => w.close()));
     closeEmailTransport();
     await closeRealtime();
+    await closeQueues();
     await disconnectDatabase();
     await connection.quit().catch(() => connection.disconnect());
 

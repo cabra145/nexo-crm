@@ -2,6 +2,7 @@ import type { AnyProcessorDefinition } from '../lib/processor';
 import { auditProcessor } from './audit.processor';
 import { emailProcessor } from './email.processor';
 import { whatsappInboundProcessor } from './whatsapp-inbound.processor';
+import { whatsappMediaProcessor } from './whatsapp-media.processor';
 import { whatsappOutboundProcessor } from './whatsapp-outbound.processor';
 
 /**
@@ -14,4 +15,5 @@ export const processors: AnyProcessorDefinition[] = [
   auditProcessor,
   whatsappInboundProcessor,
   whatsappOutboundProcessor,
+  whatsappMediaProcessor,
 ];

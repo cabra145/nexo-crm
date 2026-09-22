@@ -15,7 +15,8 @@
     "crm:e2e": "tsx scripts/crm-e2e.ts",
     "deals:e2e": "tsx scripts/deals-e2e.ts",
     "whatsapp:e2e": "tsx scripts/whatsapp-e2e.ts",
-    "inbox:e2e": "tsx scripts/inbox-e2e.ts"
+    "inbox:e2e": "tsx scripts/inbox-e2e.ts",
+    "media:e2e": "tsx scripts/media-e2e.ts"
   },
   "dependencies": {
     "@nestjs/common": "11.2.5",

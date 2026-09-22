@@ -4,6 +4,7 @@ import {
   GetObjectCommand,
   HeadBucketCommand,
   HeadObjectCommand,
+  ListObjectsV2Command,
   NoSuchKey,
   NotFound,
   PutObjectCommand,
@@ -148,6 +149,24 @@ export class S3ObjectStorage implements ObjectStorage {
         }),
       );
     }
+  }
+
+  async listKeys(prefix: string, limit = 10_000): Promise<string[]> {
+    const keys: string[] = [];
+    let token: string | undefined;
+    do {
+      const res = await this.client.send(
+        new ListObjectsV2Command({
+          Bucket: this.bucket,
+          Prefix: prefix,
+          ContinuationToken: token,
+          MaxKeys: Math.min(1000, limit - keys.length),
+        }),
+      );
+      for (const item of res.Contents ?? []) if (item.Key) keys.push(item.Key);
+      token = res.IsTruncated ? res.NextContinuationToken : undefined;
+    } while (token && keys.length < limit);
+    return keys;
   }
 
   signedGetUrl(key: string, options: SignedGetOptions): Promise<string> {

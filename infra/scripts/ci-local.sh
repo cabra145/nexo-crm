@@ -41,7 +41,7 @@ if command -v caffeinate >/dev/null 2>&1; then
   caffeinate -i -w $$ &
 fi
 
-for port in $PG_PORT $REDIS_PORT $SMTP_PORT $MAILPIT_PORT $MINIO_PORT 44000 44100 43000 44200; do
+for port in $PG_PORT $REDIS_PORT $SMTP_PORT $MAILPIT_PORT $MINIO_PORT 44000 44100 43000 44200 44201; do
   if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
     echo "El puerto $port está ocupado. Libéralo o detén la ejecución anterior." >&2
     exit 1

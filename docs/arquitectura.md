@@ -420,6 +420,36 @@ otro se rechaza, y el tipo que se comprueba es siempre el DETECTADO.
   @nexo/storage y al revés: admitir en la política un tipo que el detector no
   produce, o servir los PDF en línea, la hace fallar (probado).
 
+**Archivos que envían los clientes** (cola `whatsapp-media`). El procesador de
+entrada crea una fila `message_media` por archivo en la misma transacción que
+el mensaje y encola su descarga ANTES de dar el evento por procesado: si
+encolar falla, el evento se reintenta, sus mensajes salen como repetidos y sus
+archivos pendientes se vuelven a encolar (id del trabajo = id de la fila). El
+trabajo, en el contexto de su empresa:
+
+1. Pide los datos del archivo a Meta **con el `phone_number_id` del canal**:
+   Meta sólo lo entrega si es de ese número, así que el id de un archivo de
+   otra empresa no sirve de nada.
+2. Rechaza por el tamaño declarado **sin descargar**.
+3. Descarga **sólo de `META_MEDIA_HOSTS`** (por defecto `lookaside.fbsbx.com`),
+   por https salvo hacia la propia máquina y **sin seguir redirecciones**: la
+   petición lleva el token de la empresa, y otro dominio se lo quedaría (SSRF).
+   Un contador de bytes corta la descarga al pasar el límite, declare Meta lo
+   que declare.
+4. Exige el **SHA-256** de Meta y un **tipo real** (número mágico) admitido y de
+   la MISMA categoría que el declarado: un PDF anunciado como imagen se
+   rechaza aunque los PDF se admitan.
+5. Sube a una clave de la empresa del contexto y crea el `File` READY y el
+   enlace en una transacción, con la condición «aún sin archivo»: si otro
+   intento se adelantó, se deshace y se borra el objeto duplicado.
+
+Nada se sube antes de pasar las comprobaciones, y si algo falla después de
+subir, el objeto se borra. Los rechazos (y el último intento de un fallo
+temporal) quedan en `download_error`. La prueba `media:e2e` termina comparando
+el bucket con la base: cada objeto es un archivo READY y al revés. Quitar el
+SHA-256, el tipo real, la lista de dominios, la condición del enlace o el
+`phone_number_id` hace fallar sus comprobaciones (probado, las cinco a la vez).
+
 **Un agujero entre empresas, cerrado.** `message_media` apuntaba a `message` y
 a `file` con claves foráneas simples, que Postgres comprueba SIN RLS: un
 adjunto de una empresa podía enlazarse al archivo (o al mensaje) de otra

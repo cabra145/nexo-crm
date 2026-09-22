@@ -34,6 +34,12 @@ export const QUEUE_NAMES = {
    * reintentos si Meta o la red fallan.
    */
   WHATSAPP_OUTBOUND: 'whatsapp-outbound',
+  /**
+   * Archivos que envían los clientes (fotos, audios, documentos). La URL de
+   * Meta caduca en minutos: el worker la pide, descarga, comprueba (SHA-256,
+   * tipo real, tamaño) y guarda el archivo en el almacenamiento de la empresa.
+   */
+  WHATSAPP_MEDIA: 'whatsapp-media',
 } as const;
 
 export type QueueName = (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES];
@@ -86,6 +92,17 @@ export const QUEUE_POLICIES: Record<
     keepCompleted: { hours: 6, max: 2_000 },
     keepFailed: { days: 30 },
     concurrency: 10,
+  },
+  'whatsapp-media': {
+    // Seis intentos desde 10 s cubren ~10 minutos de Meta o del almacenamiento
+    // caídos. El id del archivo en Meta sigue válido días; cada intento pide
+    // una URL de descarga nueva. Concurrencia 4: cada trabajo tiene el archivo
+    // en memoria (hasta 25 MB).
+    attempts: 6,
+    backoffMs: 10_000,
+    keepCompleted: { hours: 6, max: 2_000 },
+    keepFailed: { days: 30 },
+    concurrency: 4,
   },
   audit: {
     // Sólo falla si la base de datos no responde. Se insiste bastante: perder
@@ -212,3 +229,14 @@ export const whatsappOutboundJobSchema = z.object({
   tenantId: uuidSchema,
 });
 export type WhatsappOutboundJob = z.infer<typeof whatsappOutboundJobSchema>;
+
+/* ========================================================================== */
+/*  Cola `whatsapp-media`                                                     */
+/* ========================================================================== */
+
+export const whatsappMediaJobSchema = z.object({
+  /** Fila de `message_media` con el id del archivo en Meta. */
+  mediaId: uuidSchema,
+  tenantId: uuidSchema,
+});
+export type WhatsappMediaJob = z.infer<typeof whatsappMediaJobSchema>;

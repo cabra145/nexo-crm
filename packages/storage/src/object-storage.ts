@@ -44,6 +44,12 @@ export interface ObjectStorage {
 
   delete(keys: string[]): Promise<void>;
 
+  /**
+   * Claves bajo un prefijo (p. ej. el de una empresa), hasta `limit`. Para la
+   * limpieza, la baja de una empresa y las pruebas; no para servir contenido.
+   */
+  listKeys(prefix: string, limit?: number): Promise<string[]>;
+
   /** URL firmada de descarga, de vida corta. */
   signedGetUrl(key: string, options: SignedGetOptions): Promise<string>;
 

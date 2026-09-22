@@ -1,3 +1,4 @@
+import { formatBytes } from '@nexo/contracts';
 import { env } from '../bootstrap/env';
 
 /**
@@ -81,4 +82,173 @@ export async function sendWhatsappText(
   const wamid = payload.messages?.[0]?.id;
   if (!wamid) throw new GraphSendError('Meta aceptó el mensaje pero no devolvió su id', false);
   return wamid;
+}
+
+/* ========================================================================== */
+/*  Archivos que envían los clientes                                          */
+/* ========================================================================== */
+
+/**
+ * No se pudo obtener un archivo de Meta. `retryable` como en `GraphSendError`:
+ * la red, un 5xx o un límite de tasa se reintentan; lo demás es definitivo.
+ */
+export class MediaFetchError extends Error {
+  constructor(
+    message: string,
+    readonly retryable: boolean,
+  ) {
+    super(message);
+    this.name = 'MediaFetchError';
+  }
+}
+
+export interface MediaInfo {
+  /** URL de descarga. Caduca en minutos: se pide en cada intento. */
+  url: string;
+  mimeType: string;
+  /** SHA-256 del contenido, en hexadecimal, según Meta. */
+  sha256: string;
+  sizeBytes: number;
+}
+
+const retryableStatus = (status: number, code?: number) =>
+  status >= 500 || status === 429 || (code !== undefined && RATE_LIMIT_CODES.has(code));
+
+/**
+ * Datos de un archivo de Meta. Se piden CON el número del canal
+ * (`phone_number_id`): Meta sólo entrega el archivo si pertenece a ese número,
+ * así que una empresa no puede recuperar el de otra conociendo su id.
+ */
+export async function getMediaInfo(
+  mediaId: string,
+  phoneNumberId: string,
+  accessToken: string,
+): Promise<MediaInfo> {
+  const base = `${env.META_GRAPH_URL.replace(/\/$/, '')}/${env.META_GRAPH_VERSION}`;
+  const url = `${base}/${encodeURIComponent(mediaId)}?phone_number_id=${encodeURIComponent(phoneNumberId)}`;
+
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      redirect: 'error',
+      signal: AbortSignal.timeout(15_000),
+    });
+  } catch (cause) {
+    throw new MediaFetchError(`No se pudo contactar con Meta: ${(cause as Error).message}`, true);
+  }
+
+  const payload = (await response.json().catch(() => ({}))) as {
+    url?: unknown;
+    mime_type?: unknown;
+    sha256?: unknown;
+    file_size?: unknown;
+    error?: { message?: string; code?: number };
+  };
+  if (!response.ok) {
+    const code = payload.error?.code;
+    const message =
+      response.status === 404 || code === 100
+        ? 'Meta no encuentra el archivo (o no es de este número)'
+        : (payload.error?.message ?? `Meta respondió ${response.status}`);
+    throw new MediaFetchError(message, retryableStatus(response.status, code));
+  }
+
+  const size = Number(payload.file_size);
+  if (
+    typeof payload.url !== 'string' ||
+    typeof payload.mime_type !== 'string' ||
+    typeof payload.sha256 !== 'string' ||
+    !/^[0-9a-f]{64}$/i.test(payload.sha256) ||
+    !Number.isInteger(size) ||
+    size < 0
+  ) {
+    throw new MediaFetchError('Meta devolvió los datos del archivo incompletos', false);
+  }
+  return {
+    url: payload.url,
+    mimeType: payload.mime_type,
+    sha256: payload.sha256.toLowerCase(),
+    sizeBytes: size,
+  };
+}
+
+const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]']);
+
+/**
+ * ¿Se puede descargar de esta URL? Sólo de los dominios de META_MEDIA_HOSTS, y
+ * por https salvo hacia la propia máquina. La petición lleva el token de la
+ * empresa: pedirle algo a otro dominio sería entregárselo (SSRF).
+ */
+export function isAllowedMediaUrl(raw: string, allowedHosts: readonly string[]): boolean {
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return false;
+  }
+  if (url.username || url.password) return false;
+  const host = url.hostname.toLowerCase();
+  const secure = url.protocol === 'https:' || (url.protocol === 'http:' && LOOPBACK.has(host));
+  return secure && allowedHosts.includes(host);
+}
+
+/**
+ * Descarga el contenido con el token, sin seguir redirecciones (una redirección
+ * podría llevar el token a otro dominio) y contando bytes: se corta en cuanto
+ * se supera `maxBytes`, aunque Meta hubiera declarado menos.
+ */
+export async function downloadMedia(
+  rawUrl: string,
+  accessToken: string,
+  maxBytes: number,
+): Promise<Buffer> {
+  if (!isAllowedMediaUrl(rawUrl, env.META_MEDIA_HOSTS)) {
+    let host = '(URL inválida)';
+    try {
+      host = new URL(rawUrl).host;
+    } catch {
+      // queda el texto por defecto
+    }
+    throw new MediaFetchError(`Meta indicó descargar de un dominio no permitido: ${host}`, false);
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(rawUrl, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      redirect: 'error',
+      signal: AbortSignal.timeout(60_000),
+    });
+  } catch (cause) {
+    throw new MediaFetchError(`No se pudo descargar el archivo: ${(cause as Error).message}`, true);
+  }
+  if (!response.ok || !response.body) {
+    await response.body?.cancel();
+    throw new MediaFetchError(
+      `La descarga respondió ${response.status}`,
+      retryableStatus(response.status),
+    );
+  }
+
+  const declared = Number(response.headers.get('content-length'));
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    await response.body.cancel();
+    throw new MediaFetchError(`El archivo supera el máximo de ${formatBytes(maxBytes)}`, false);
+  }
+
+  const reader = (response.body as ReadableStream<Uint8Array>).getReader();
+  const chunks: Buffer[] = [];
+  let total = 0;
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel();
+      throw new MediaFetchError(`El archivo supera el máximo de ${formatBytes(maxBytes)}`, false);
+    }
+    chunks.push(Buffer.from(value));
+  }
+  return Buffer.concat(chunks);
 }

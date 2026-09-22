@@ -56,6 +56,8 @@ export APP_URL="${APP_URL:-http://localhost:${WEB_PORT}}"
 # La Graph API de Meta, simulada: whatsapp:e2e levanta un simulador en este
 # puerto y la API lo consulta en lugar de a Meta. El CI no depende de Meta.
 export META_GRAPH_URL="${META_GRAPH_URL:-http://127.0.0.1:44200}"
+# Único dominio del que el worker descarga archivos: el del simulador.
+export META_MEDIA_HOSTS="${META_MEDIA_HOSTS:-127.0.0.1}"
 export SMTP_HOST="${SMTP_HOST:-localhost}"
 export SMTP_PORT="${SMTP_PORT:-1025}"
 export SMTP_FROM="${SMTP_FROM:-Nexo CRM <no-responder@nexo.test>}"
@@ -235,6 +237,9 @@ pnpm --silent --filter @nexo/api whatsapp:e2e || fail "whatsapp:e2e"
 
 step "Bandeja de entrada de extremo a extremo (reparto, envío, tiempo real)"
 pnpm --silent --filter @nexo/api inbox:e2e || fail "inbox:e2e"
+
+step "Archivos de WhatsApp de extremo a extremo (SHA-256, tipo real, SSRF, aislamiento)"
+pnpm --silent --filter @nexo/api media:e2e || fail "media:e2e"
 
 step "Prueba de humo del worker"
 pnpm --silent --filter @nexo/worker smoke || fail "prueba de humo"

@@ -190,6 +190,22 @@ export const workerEnvSchema = baseSchema.extend({
   META_GRAPH_VERSION: z.string().default('v21.0'),
   /** Igual que en la API: el envío de mensajes lo hace el worker. */
   META_GRAPH_URL: z.string().url().default('https://graph.facebook.com'),
+  /**
+   * Dominios desde los que se DESCARGAN los archivos de WhatsApp, separados por
+   * comas. La URL la da Meta, pero la petición lleva el token de la empresa:
+   * a cualquier otro dominio no se le pide nada (protección SSRF). En el CI,
+   * el del simulador.
+   */
+  META_MEDIA_HOSTS: z
+    .string()
+    .default('lookaside.fbsbx.com')
+    .transform((v) =>
+      v
+        .split(',')
+        .map((h) => h.trim().toLowerCase())
+        .filter(Boolean),
+    )
+    .refine((hosts) => hosts.length > 0, 'indica al menos un dominio'),
 
   SENTRY_DSN: z.string().optional(),
 });

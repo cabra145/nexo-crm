@@ -17,6 +17,7 @@ import {
 } from '@nexo/database';
 import { UnrecoverableError } from 'bullmq';
 import { defineProcessor } from '../lib/processor';
+import { enqueueMediaDownloads } from '../lib/queues';
 import { publishRealtime } from '../lib/realtime';
 
 /** Ventana de 24 h de Meta para responder con texto libre. */
@@ -54,6 +55,7 @@ interface Summary {
   duplicates: number;
   statuses: number;
   newContacts: number;
+  media: number;
 }
 
 /** Conversaciones que cambiaron, para avisar a la bandeja al confirmar. */
@@ -114,6 +116,8 @@ export const whatsappInboundProcessor = defineProcessor({
 
     let summary: Summary;
     const touched: Touched = new Map();
+    /** Archivos por descargar (message_media), nuevos o pendientes de antes. */
+    const pendingMedia: string[] = [];
     try {
       summary = await runInTenantTransaction(async (tx) => {
         const channel = await tx.channel.findUnique({
@@ -124,7 +128,13 @@ export const whatsappInboundProcessor = defineProcessor({
           throw new IgnoredEvent('El canal ya no está conectado');
         }
 
-        const result: Summary = { messages: 0, duplicates: 0, statuses: 0, newContacts: 0 };
+        const result: Summary = {
+          messages: 0,
+          duplicates: 0,
+          statuses: 0,
+          newContacts: 0,
+          media: 0,
+        };
         for (const entry of parsed.data.entry) {
           for (const change of entry.changes) {
             if (change.field !== 'messages') continue;
@@ -136,7 +146,15 @@ export const whatsappInboundProcessor = defineProcessor({
                 `El evento es del número ${change.value.metadata?.phone_number_id ?? '?'}, no del de este canal`,
               );
             }
-            await ingestChange(tx, data.tenantId, channel.id, change.value, result, touched);
+            await ingestChange(
+              tx,
+              data.tenantId,
+              channel.id,
+              change.value,
+              result,
+              touched,
+              pendingMedia,
+            );
           }
         }
         return result;
@@ -156,6 +174,13 @@ export const whatsappInboundProcessor = defineProcessor({
       });
       throw error;
     }
+
+    // Las descargas se encolan ANTES de dar el evento por procesado: si Redis
+    // falla aquí, el trabajo se reintenta entero, sus mensajes salen como
+    // repetidos y sus archivos aún sin descargar se vuelven a encolar (el id
+    // del trabajo, el de la fila, impide que se descarguen dos veces).
+    await enqueueMediaDownloads(data.tenantId, pendingMedia);
+    summary.media = pendingMedia.length;
 
     await finish(event.id, 'PROCESSED', null);
     // Después de confirmar: un aviso de algo que luego se deshace haría que la
@@ -186,6 +211,7 @@ async function ingestChange(
   value: MetaChangeValue,
   result: Summary,
   touched: Touched,
+  pendingMedia: string[],
 ): Promise<void> {
   const names = new Map(
     (value.contacts ?? []).map((c) => [c.wa_id, c.profile?.name?.trim() || null]),
@@ -199,6 +225,7 @@ async function ingestChange(
       names.get(message.from) ?? null,
       result,
       touched,
+      pendingMedia,
     );
   }
   for (const status of value.statuses ?? []) {
@@ -214,6 +241,7 @@ async function ingestMessage(
   profileName: string | null,
   result: Summary,
   touched: Touched,
+  pendingMedia: string[],
 ): Promise<void> {
   // Idempotencia: Meta reintenta, y un mismo `wamid` puede llegar en dos
   // eventos distintos. El índice único (canal, id externo) es la última red.
@@ -223,6 +251,13 @@ async function ingestMessage(
   });
   if (existing) {
     result.duplicates += 1;
+    // Sus archivos que sigan sin descargar ni fallar se vuelven a encolar: es
+    // como se recupera una descarga que no llegó a encolarse.
+    const pending = await tx.messageMedia.findMany({
+      where: { messageId: existing.id, fileId: null, downloadError: null },
+      select: { id: true },
+    });
+    pendingMedia.push(...pending.map((m) => m.id));
     return;
   }
 
@@ -244,7 +279,8 @@ async function ingestMessage(
     },
   });
 
-  await tx.message.create({
+  const created = await tx.message.create({
+    select: { id: true },
     data: {
       tenantId,
       conversationId: conversation.id,
@@ -261,6 +297,24 @@ async function ingestMessage(
       createdAt: sentAt,
     },
   });
+
+  // El archivo, si lo hay: sólo sus datos. El contenido lo baja el trabajo
+  // whatsapp-media, fuera de esta transacción.
+  const media = mediaOf(message);
+  if (media) {
+    const row = await tx.messageMedia.create({
+      data: {
+        tenantId,
+        messageId: created.id,
+        externalMediaId: media.id,
+        mimeType: media.mimeType,
+        filename: media.filename,
+        caption: media.caption,
+      },
+      select: { id: true },
+    });
+    pendingMedia.push(row.id);
+  }
 
   // La ventana se mide desde el ÚLTIMO mensaje del contacto; un mensaje viejo
   // que llega tarde no la acorta.
@@ -421,6 +475,36 @@ async function applyStatus(
   });
   result.statuses += 1;
   touch(touched, message.conversationId, message.conversation.assigneeId, 'delivery');
+}
+
+/** El archivo de un mensaje, tal como lo describe Meta (sin descargar). */
+function mediaOf(message: MetaInboundMessage): {
+  id: string;
+  mimeType: string | null;
+  filename: string | null;
+  caption: string | null;
+} | null {
+  const media =
+    message.type === 'image'
+      ? message.image
+      : message.type === 'video'
+        ? message.video
+        : message.type === 'audio'
+          ? message.audio
+          : message.type === 'document'
+            ? message.document
+            : message.type === 'sticker'
+              ? message.sticker
+              : undefined;
+  if (!media?.id) return null;
+  const filename =
+    message.type === 'document' ? (message.document?.filename?.slice(0, 255) ?? null) : null;
+  return {
+    id: media.id.slice(0, 160),
+    mimeType: media.mime_type?.slice(0, 120) ?? null,
+    filename,
+    caption: media.caption ?? null,
+  };
 }
 
 /** Tipo del mensaje en Nexo y el texto que lo representa. */
