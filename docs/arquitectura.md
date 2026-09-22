@@ -450,6 +450,25 @@ el bucket con la base: cada objeto es un archivo READY y al revés. Quitar el
 SHA-256, el tipo real, la lista de dominios, la condición del enlace o el
 `phone_number_id` hace fallar sus comprobaciones (probado, las cinco a la vez).
 
+**Adjuntos que envía el agente** (`POST /conversations/:id/uploads` y el
+`fileId` en el envío). Tres fases: reservar, subir directo al almacenamiento y
+enviar. La API nunca recibe los bytes.
+
+| Decisión                                       | Por qué                                                                                                                                                                                                                                                                      |
+| ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Subida directa con URL firmada**             | La API no mueve archivos de 25 MB. Tipo y tamaño van DENTRO de la firma: subir otra cosa lo rechaza el almacenamiento (403)                                                                                                                                                  |
+| **Lo declarado no decide nada**                | Al enviar, la API consulta el objeto ya subido: tamaño real, tipo real por número mágico y **la misma categoría que se declaró** (un HTML subido como «imagen» es texto: un tipo admitido, pero no una imagen). Si no cuadra, el archivo queda REJECTED y el objeto se borra |
+| **Un archivo, un mensaje**                     | El paso a READY es condicional; reenviar el mismo `fileId` da 409                                                                                                                                                                                                            |
+| **Sólo quien reservó puede adjuntar**          | `file` no cuelga de ninguna conversación, así que se exige el mismo usuario; la conversación de destino ya exige permiso de escritura                                                                                                                                        |
+| **Máximo 10 reservas pendientes por persona**  | Una reserva es una fila y un permiso de escritura. La undécima devuelve 429; las abandonadas las recoge la limpieza                                                                                                                                                          |
+| **Sin stickers al enviar**                     | Meta exige un WebP muy concreto y rechazaría casi cualquier imagen                                                                                                                                                                                                           |
+| **Pie de foto sólo donde WhatsApp lo muestra** | Con audio se responde 400 (sin descartar el archivo, que se puede reenviar sin texto) en lugar de guardar un texto que el cliente no vería                                                                                                                                   |
+| **El id de Meta se guarda tras subirlo**       | Un reintento del envío no vuelve a subir los bytes: Meta conserva el archivo 30 días                                                                                                                                                                                         |
+
+Quitar la comprobación del objeto, la condición de «un archivo, un mensaje»,
+la comparación de categoría o el tamaño firmado hace fallar sus comprobaciones
+(probado, las cuatro a la vez).
+
 **Descargas privadas con URL firmada** (`GET /conversations/:id/media/:mediaId/url`).
 Los bytes NO pasan por la API: el navegador los pide al almacenamiento con una
 URL firmada de 5 minutos (`STORAGE_URL_TTL_SECONDS`), y la respuesta dice

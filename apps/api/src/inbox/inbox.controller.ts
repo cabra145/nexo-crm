@@ -20,8 +20,10 @@ import {
   type MediaUrlView,
   type MessagePage,
   messageListQuerySchema,
+  reserveUploadSchema,
   type MessageView,
   sendMessageSchema,
+  type UploadReservationView,
 } from '@nexo/contracts';
 import type { Request } from 'express';
 import type { z } from 'zod';
@@ -93,7 +95,20 @@ export class InboxController {
     @Param('id', uuid) id: string,
     @Body(new ZodValidationPipe(sendMessageSchema)) body: z.infer<typeof sendMessageSchema>,
   ): Promise<MessageView> {
-    return this.inbox.send(access, id, body.body);
+    return this.inbox.send(access, id, body);
+  }
+
+  @Post(':id/uploads')
+  @RequirePermission('conversation:write')
+  @ApiOperation({
+    summary: 'Reservar una subida: devuelve una URL firmada para subir el archivo',
+  })
+  reserveUpload(
+    @CurrentAccess() access: ResolvedAccess,
+    @Param('id', uuid) id: string,
+    @Body(new ZodValidationPipe(reserveUploadSchema)) body: z.infer<typeof reserveUploadSchema>,
+  ): Promise<UploadReservationView> {
+    return this.inbox.reserveUpload(access, id, body);
   }
 
   @Post(':id/messages/:messageId/retry')

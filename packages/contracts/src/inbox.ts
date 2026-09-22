@@ -142,14 +142,46 @@ export interface MessagePage {
 /** Límite de Meta para el cuerpo de un mensaje de texto. */
 export const WHATSAPP_TEXT_MAX = 4096;
 
-export const sendMessageSchema = z.object({
-  body: z
-    .string()
-    .trim()
-    .min(1, 'escribe un mensaje')
-    .max(WHATSAPP_TEXT_MAX, `máximo ${WHATSAPP_TEXT_MAX} caracteres`),
-});
+export const sendMessageSchema = z
+  .object({
+    body: z
+      .string()
+      .trim()
+      .max(WHATSAPP_TEXT_MAX, `máximo ${WHATSAPP_TEXT_MAX} caracteres`)
+      .optional(),
+    /** Archivo reservado y ya subido (ver `reserveUploadSchema`). */
+    fileId: z.string().uuid().optional(),
+  })
+  .refine((v) => Boolean(v.fileId) || (v.body ?? '').length > 0, {
+    message: 'escribe un mensaje o adjunta un archivo',
+    path: ['body'],
+  });
 export type SendMessageInput = z.infer<typeof sendMessageSchema>;
+
+/* ========================================================================== */
+/*  Adjuntos que envía el agente                                              */
+/* ========================================================================== */
+
+/** Reservas pendientes que puede tener una persona a la vez. */
+export const MAX_PENDING_UPLOADS = 10;
+
+export const reserveUploadSchema = z.object({
+  filename: z.string().trim().min(1, 'falta el nombre del archivo').max(255),
+  /** Tipo que declara el navegador: sólo sirve para firmar; manda el contenido. */
+  mimeType: z.string().trim().min(3).max(120),
+  sizeBytes: z.coerce.number().int().positive('el archivo está vacío'),
+});
+export type ReserveUploadInput = z.infer<typeof reserveUploadSchema>;
+
+/** Permiso de subida directa al almacenamiento, de vida corta. */
+export interface UploadReservationView {
+  fileId: string;
+  /** URL firmada para un PUT con ESTE tipo y ESTE tamaño exactos. */
+  url: string;
+  expiresAt: string;
+  /** Cabeceras obligatorias del PUT: con otras, la firma no vale. */
+  headers: Record<string, string>;
+}
 
 export const assignConversationSchema = z.object({
   /** null = liberarla (sin asignar). */
@@ -171,4 +203,10 @@ export const INBOX_PROBLEMS = {
   ALREADY_ASSIGNED: 'https://nexo.app/problems/conversacion-ya-asignada',
   /** El archivo aún no está descargado, o se rechazó al comprobarlo. */
   MEDIA_NOT_READY: 'https://nexo.app/problems/archivo-no-disponible',
+  /** Demasiadas reservas de subida sin terminar. */
+  UPLOAD_LIMIT: 'https://nexo.app/problems/subidas-pendientes',
+  /** El archivo reservado no llegó a subirse, o no es lo que se declaró. */
+  UPLOAD_INVALID: 'https://nexo.app/problems/subida-invalida',
+  /** Ese archivo ya se envió en otro mensaje. */
+  UPLOAD_USED: 'https://nexo.app/problems/archivo-ya-enviado',
 } as const;

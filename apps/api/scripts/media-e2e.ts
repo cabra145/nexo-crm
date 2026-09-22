@@ -83,6 +83,12 @@ const infoHits = new Map<string, number>();
 const downloadHits = new Map<string, number>();
 const bump = (map: Map<string, number>, key: string) => map.set(key, (map.get(key) ?? 0) + 1);
 const rogueHits: Array<{ authorization: string | undefined }> = [];
+/** Archivos que el agente sube a Meta y mensajes que Meta recibe. */
+const uploads: Array<{ id: string; body: Buffer }> = [];
+const outbound: Array<Record<string, unknown>> = [];
+/** Fallos que el simulador provoca una vez, según el nombre del archivo. */
+let failNextUpload = false;
+let failNextSend = false;
 
 function startMeta(): Promise<Server> {
   const base = new URL(process.env.META_GRAPH_URL ?? 'http://127.0.0.1:44200');
@@ -97,6 +103,31 @@ function startMeta(): Promise<Server> {
       };
       if (req.headers.authorization !== `Bearer ${TOKEN}`) {
         return json(401, { error: { message: 'Invalid OAuth access token.', code: 190 } });
+      }
+
+      // El agente sube un archivo: POST /{phone}/media (multipart).
+      if (req.method === 'POST' && parts[2] === 'media') {
+        const chunks: Buffer[] = [];
+        for await (const chunk of req) chunks.push(chunk as Buffer);
+        if (failNextUpload) {
+          failNextUpload = false;
+          return json(500, { error: { message: 'Upload failed', code: 2 } });
+        }
+        const id = `meta-subida-${uploads.length + 1}`;
+        uploads.push({ id, body: Buffer.concat(chunks) });
+        return json(200, { id });
+      }
+
+      // El agente envía un mensaje: POST /{phone}/messages.
+      if (req.method === 'POST' && parts[2] === 'messages') {
+        const chunks: Buffer[] = [];
+        for await (const chunk of req) chunks.push(chunk as Buffer);
+        if (failNextSend) {
+          failNextSend = false;
+          return json(500, { error: { message: 'Send failed', code: 2 } });
+        }
+        outbound.push(JSON.parse(Buffer.concat(chunks).toString()) as Record<string, unknown>);
+        return json(200, { messages: [{ id: `wamid.saliente.${outbound.length}` }] });
       }
 
       // Contenido: /descargas/{id}
@@ -949,21 +980,294 @@ async function main(): Promise<void> {
       !raw.includes('tenants/') && !raw.includes('storageKey') && !raw.includes('X-Amz'),
     );
 
-    section('14 · El bucket sólo tiene lo guardado');
+    section('15 · Adjuntos que envía el agente');
+    const reserve = (s: Session, conversation: string, body: Record<string, unknown>) =>
+      http<{ fileId: string; url: string; headers: Record<string, string>; expiresAt: string }>(
+        'POST',
+        `/conversations/${conversation}/uploads`,
+        { token: s.accessToken, body },
+      );
+    const put = (url: string, headers: Record<string, string>, bytes: Buffer) =>
+      fetch(url, { method: 'PUT', headers, body: new Uint8Array(bytes) });
+    const send = (s: Session, conversation: string, body: Record<string, unknown>) =>
+      http<{ id: string; type: string; media: { status: string } | null }>(
+        'POST',
+        `/conversations/${conversation}/messages`,
+        { token: s.accessToken, body },
+      );
+    const messageStatus = async (id: string, timeoutMs = 30_000) => {
+      const until = Date.now() + timeoutMs;
+      for (;;) {
+        const row = await db.message.findUnique({
+          where: { id },
+          select: { status: true, errorMessage: true, externalId: true },
+        });
+        if (row && ['SENT', 'FAILED'].includes(row.status)) return row;
+        if (Date.now() > until) return row;
+        await sleep(150);
+      }
+    };
+
+    const agentPhoto = jpeg();
+    const reserved = await reserve(a, conversationId!, {
+      filename: 'catálogo.jpg',
+      mimeType: 'image/jpeg',
+      sizeBytes: agentPhoto.length,
+    });
+    check(
+      'reservar devuelve una URL de subida firmada y la cabecera obligatoria',
+      reserved.status === 201 &&
+        reserved.body.url.includes('X-Amz-Signature') &&
+        reserved.body.headers['Content-Type'] === 'image/jpeg',
+      `${reserved.status}`,
+    );
+
+    const wrongType = await put(reserved.body.url, { 'Content-Type': 'text/plain' }, agentPhoto);
+    const wrongSize = await put(
+      reserved.body.url,
+      reserved.body.headers,
+      Buffer.concat([agentPhoto, Buffer.from('de más')]),
+    );
+    check(
+      'subir con otro tipo o con otro tamaño → rechazado por el almacenamiento',
+      wrongType.status === 403 && wrongSize.status === 403,
+      `${wrongType.status} · ${wrongSize.status}`,
+    );
+
+    const uploaded = await put(reserved.body.url, reserved.body.headers, agentPhoto);
+    check(
+      'la subida con el tipo y tamaño firmados funciona',
+      uploaded.status === 200,
+      `${uploaded.status}`,
+    );
+
+    const sentPhoto = await send(a, conversationId!, {
+      fileId: reserved.body.fileId,
+      body: 'Este es el catálogo',
+    });
+    check(
+      'enviar con el archivo → mensaje de tipo IMAGE con su adjunto listo',
+      sentPhoto.status === 201 &&
+        sentPhoto.body.type === 'IMAGE' &&
+        sentPhoto.body.media?.status === 'ready',
+      `${sentPhoto.status} ${sentPhoto.body.type}`,
+    );
+    const delivered = await messageStatus(sentPhoto.body.id);
+    const upload = uploads.at(-1);
+    const metaMessage = outbound.at(-1) as
+      { type?: string; image?: { id?: string; caption?: string } } | undefined;
+    check(
+      'el worker sube a Meta los MISMOS bytes y envía el mensaje con ese id y su pie',
+      delivered?.status === 'SENT' &&
+        Boolean(upload && upload.body.includes(agentPhoto)) &&
+        metaMessage?.type === 'image' &&
+        metaMessage.image?.id === upload?.id &&
+        metaMessage.image?.caption === 'Este es el catálogo',
+      `${delivered?.status} · ${delivered?.errorMessage ?? ''}`,
+    );
+
+    const reused = await send(a, conversationId!, {
+      fileId: reserved.body.fileId,
+      body: 'otra vez',
+    });
+    check(
+      'el mismo archivo no se puede enviar dos veces → 409',
+      reused.status === 409 &&
+        (reused.body as unknown as { type: string }).type === INBOX_PROBLEMS.UPLOAD_USED,
+      `${reused.status}`,
+    );
+
+    section('16 · Lo que manda es el contenido subido, no lo declarado');
+    const disguisedBytes = html();
+    const disguisedReserve = await reserve(a, conversationId!, {
+      filename: 'inocente.jpg',
+      mimeType: 'image/jpeg',
+      sizeBytes: disguisedBytes.length,
+    });
+    await put(disguisedReserve.body.url, disguisedReserve.body.headers, disguisedBytes);
+    const disguisedSend = await send(a, conversationId!, { fileId: disguisedReserve.body.fileId });
+    const disguisedFile = await db.file.findUniqueOrThrow({
+      where: { id: disguisedReserve.body.fileId },
+      select: { status: true, storageKey: true, rejectReason: true },
+    });
+    check(
+      'un HTML subido como JPEG → 400, archivo REJECTED y objeto borrado',
+      disguisedSend.status === 400 &&
+        (disguisedSend.body as unknown as { type: string }).type ===
+          INBOX_PROBLEMS.UPLOAD_INVALID &&
+        disguisedFile.status === 'REJECTED' &&
+        (await storage.head(disguisedFile.storageKey)) === null,
+      `${disguisedSend.status} · ${disguisedFile.status}`,
+    );
+
+    const neverUploaded = await reserve(a, conversationId!, {
+      filename: 'fantasma.pdf',
+      mimeType: 'application/pdf',
+      sizeBytes: 1000,
+    });
+    const ghost = await send(a, conversationId!, { fileId: neverUploaded.body.fileId });
+    check(
+      'enviar un archivo que nunca se subió → 400',
+      ghost.status === 400 &&
+        /no se completó/.test((ghost.body as unknown as { detail: string }).detail),
+      `${ghost.status}`,
+    );
+
+    const badReserves = await Promise.all([
+      reserve(a, conversationId!, { filename: 'a.gif', mimeType: 'image/gif', sizeBytes: 100 }),
+      reserve(a, conversationId!, {
+        filename: 'b.jpg',
+        mimeType: 'image/jpeg',
+        sizeBytes: 6 * 1024 * 1024,
+      }),
+      reserve(a, conversationId!, { filename: 'c.webp', mimeType: 'image/webp', sizeBytes: 100 }),
+    ]);
+    check(
+      'reservar un GIF, algo de 6 MB o un sticker → 400 sin crear nada',
+      badReserves.every((r) => r.status === 400),
+      badReserves.map((r) => r.status).join(','),
+    );
+
+    const voiceBytes = ogg();
+    const voiceReserve = await reserve(a, conversationId!, {
+      filename: 'nota.ogg',
+      mimeType: 'audio/ogg',
+      sizeBytes: voiceBytes.length,
+    });
+    await put(voiceReserve.body.url, voiceReserve.body.headers, voiceBytes);
+    const withCaption = await send(a, conversationId!, {
+      fileId: voiceReserve.body.fileId,
+      body: 'escucha esto',
+    });
+    const voiceSent = await send(a, conversationId!, { fileId: voiceReserve.body.fileId });
+    check(
+      'un audio con texto → 400, y sin texto se envía (el archivo no se descarta)',
+      withCaption.status === 400 && voiceSent.status === 201 && voiceSent.body.type === 'AUDIO',
+      `${withCaption.status} → ${voiceSent.status}`,
+    );
+
+    section('17 · Permisos, aislamiento y reintentos del envío');
+    const byViewerReserve = await reserve(viewer, conversationId!, {
+      filename: 'x.jpg',
+      mimeType: 'image/jpeg',
+      sizeBytes: 100,
+    });
+    check(
+      'quien no puede responder no reserva → 403',
+      byViewerReserve.status === 403,
+      `${byViewerReserve.status}`,
+    );
+
+    const agentA = await member('agente', roles.body.roles.find((r) => r.key === 'AGENT')!.id);
+    const agentBytes = jpeg();
+    const agentReserve = await reserve(agentA, conversationId!, {
+      filename: 'de-otro.jpg',
+      mimeType: 'image/jpeg',
+      sizeBytes: agentBytes.length,
+    });
+    await put(agentReserve.body.url, agentReserve.body.headers, agentBytes);
+    const stolenUpload = await send(a, conversationId!, { fileId: agentReserve.body.fileId });
+    check(
+      'el archivo reservado por otra persona no se puede adjuntar → 404',
+      stolenUpload.status === 404,
+      `${stolenUpload.status}`,
+    );
+    const fromOtherTenant = await send(b, bConversation.id, { fileId: agentReserve.body.fileId });
+    check(
+      'ni desde otra empresa → 404 o 409',
+      [404, 409].includes(fromOtherTenant.status),
+      `${fromOtherTenant.status}`,
+    );
+
+    const disconnected = await reserve(b, bConversation.id, {
+      filename: 'y.jpg',
+      mimeType: 'image/jpeg',
+      sizeBytes: 100,
+    });
+    check(
+      'con el canal desconectado no se puede ni reservar → 409',
+      disconnected.status === 409,
+      `${disconnected.status}`,
+    );
+
+    // Meta acepta la subida pero falla el envío: al reintentar NO se vuelve a subir.
+    const retryBytes = jpeg();
+    const retryReserve = await reserve(a, conversationId!, {
+      filename: 'reintento.jpg',
+      mimeType: 'image/jpeg',
+      sizeBytes: retryBytes.length,
+    });
+    await put(retryReserve.body.url, retryReserve.body.headers, retryBytes);
+    failNextSend = true;
+    const uploadsBefore = uploads.length;
+    const retrySend = await send(a, conversationId!, { fileId: retryReserve.body.fileId });
+    const resent = await messageStatus(retrySend.body.id, 40_000);
+    check(
+      'si Meta falla al enviar, se reintenta y el archivo NO se sube dos veces',
+      resent?.status === 'SENT' && uploads.length === uploadsBefore + 1,
+      `${resent?.status} · subidas ${uploads.length - uploadsBefore}`,
+    );
+
+    section('18 · Límite de reservas pendientes');
+    let limitStatus = 0;
+    let reservesDone = 0;
+    for (let i = 0; i < 12 && limitStatus !== 429; i++) {
+      const r = await reserve(a, conversationId!, {
+        filename: `cola-${i}.jpg`,
+        mimeType: 'image/jpeg',
+        sizeBytes: 100,
+      });
+      limitStatus = r.status;
+      if (r.status === 201) reservesDone += 1;
+    }
+    check(
+      'a las 10 reservas sin terminar, la siguiente → 429',
+      limitStatus === 429 && reservesDone <= 10,
+      `${reservesDone} reservas antes del 429`,
+    );
+    // Las pendientes no tienen objeto: se limpian aquí (y, en producción, el
+    // trabajo periódico del paso 7).
+    // Sin enlazar: un archivo enlazado no se borra suelto (clave foránea del
+    // paso 2), y aquí hay uno a propósito, de la sección 12.
+    // Sólo las de este caso: no tienen objeto. Otras reservas pendientes sí lo
+    // tienen (una subida que nunca se envió) y deben seguir ahí para la
+    // comprobación final.
+    await db.file.deleteMany({
+      where: { tenantId: a.tenantId, status: 'PENDING', originalName: { startsWith: 'cola-' } },
+    });
+
+    section('14 · El bucket y la base cuadran');
     for (const s of [a, b]) {
-      const keys = (await storage.listKeys(tenantPrefix(s.tenantId))).sort();
-      const files = (
-        await db.file.findMany({
-          where: { tenantId: s.tenantId, status: 'READY' },
-          select: { storageKey: true },
-        })
-      )
-        .map((f) => f.storageKey)
-        .sort();
+      const keys = new Set(await storage.listKeys(tenantPrefix(s.tenantId)));
+      const files = await db.file.findMany({
+        where: { tenantId: s.tenantId },
+        select: { storageKey: true, status: true },
+      });
+      const ready = files.filter((f) => f.status === 'READY').map((f) => f.storageKey);
+      const pending = files.filter((f) => f.status === 'PENDING').map((f) => f.storageKey);
+      const rejected = files.filter((f) => f.status === 'REJECTED').map((f) => f.storageKey);
+      const label = s === a ? 'A' : 'B';
+
+      // Todo objeto tiene su fila: guardado, o reserva subida y aún sin enviar
+      // (la recoge la limpieza del paso 7). Nada huérfano.
+      const orphans = [...keys].filter((k) => !ready.includes(k) && !pending.includes(k));
       check(
-        `empresa ${s === a ? 'A' : 'B'}: cada objeto es un archivo READY y al revés (ni rechazados ni huérfanos)`,
-        JSON.stringify(keys) === JSON.stringify(files),
-        `${keys.length} objetos · ${files.length} archivos`,
+        `empresa ${label}: ningún objeto sin su fila`,
+        orphans.length === 0,
+        orphans.join(', '),
+      );
+      // Y todo archivo guardado tiene su objeto.
+      const missing = ready.filter((k) => !keys.has(k));
+      check(
+        `empresa ${label}: todo archivo guardado tiene su objeto`,
+        missing.length === 0,
+        missing.join(', '),
+      );
+      // Lo rechazado se borra en el momento.
+      check(
+        `empresa ${label}: nada de lo rechazado sigue en el bucket`,
+        rejected.every((k) => !keys.has(k)),
+        `${rejected.length} rechazados`,
       );
     }
   } finally {

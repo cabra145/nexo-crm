@@ -1,5 +1,8 @@
 import { HttpStatus, Inject, Injectable, Logger } from '@nestjs/common';
 import {
+  allowsCaption,
+  canSend,
+  checkMedia,
   dispositionFor,
   type ConversationCounts,
   type ConversationDetail,
@@ -7,19 +10,33 @@ import {
   type ConversationListQuery,
   type ConversationSummary,
   INBOX_PROBLEMS,
+  MAX_PENDING_UPLOADS,
+  MEDIA_LABELS,
+  type MediaKind,
+  mediaKindOf,
   type MediaUrlView,
   type MessageListQuery,
   type MessageMediaView,
   type MessagePage,
+  type ReserveUploadInput,
   type MessageView,
   type Permission,
   PROBLEM_TYPES,
   QUEUE_NAMES,
   type RealtimeEvent,
+  type SendMessageInput,
+  type UploadReservationView,
   type WhatsappOutboundJob,
 } from '@nexo/contracts';
 import { Prisma, runInTenantTransaction, type TenantTransactionClient } from '@nexo/database';
-import { assertTenantKey, type ObjectStorage } from '@nexo/storage';
+import {
+  assertTenantKey,
+  type ObjectStorage,
+  resolveMime,
+  SNIFF_BYTES,
+  sniffMime,
+  tenantKey,
+} from '@nexo/storage';
 import type { Queue } from 'bullmq';
 import type { Request } from 'express';
 import { ProblemException } from '../common/problem.exception';
@@ -301,13 +318,114 @@ export class InboxService {
   /* ======================================================================== */
 
   /**
+   * Reserva una subida: comprueba lo que se puede comprobar ANTES de que
+   * existan los bytes (permiso, canal, ventana, tipo y tamaño declarados) y
+   * devuelve una URL firmada para que el navegador suba el archivo DIRECTO al
+   * almacenamiento. La API no mueve bytes.
+   *
+   * Lo declarado sólo sirve para firmar: el tipo y el tamaño van dentro de la
+   * firma —subir otra cosa lo rechaza el almacenamiento— y, además, al enviar
+   * el mensaje se comprueba el objeto de verdad.
+   */
+  async reserveUpload(
+    access: ResolvedAccess,
+    conversationId: string,
+    input: ReserveUploadInput,
+  ): Promise<UploadReservationView> {
+    const storage = this.requireStorage();
+    const writable = await this.visibleWhere(access, 'conversation:write');
+
+    const kind = mediaKindOf(input.mimeType);
+    const check = checkMedia({ mime: input.mimeType, sizeBytes: input.sizeBytes });
+    if (!check.ok || !kind || !canSend(kind)) {
+      throw new ProblemException({
+        type: PROBLEM_TYPES.VALIDATION,
+        title: 'No se puede enviar ese archivo',
+        status: HttpStatus.BAD_REQUEST,
+        errors: [
+          {
+            field: 'file',
+            message: check.ok ? 'WhatsApp no permite enviar este tipo de archivo' : check.reason,
+          },
+        ],
+      });
+    }
+
+    const key = tenantKey(access.tenantId, 'whatsapp-media', check.extension);
+    assertTenantKey(access.tenantId, key);
+
+    const fileId = await runInTenantTransaction(async (tx) => {
+      const conversation = await tx.conversation.findFirst({
+        where: { AND: [{ id: conversationId }, writable] },
+        select: {
+          id: true,
+          windowExpiresAt: true,
+          channel: { select: { status: true, credentialsEncrypted: true } },
+        },
+      });
+      if (!conversation) throw notFound('Conversación');
+      assertCanSend(conversation, new Date());
+
+      // Cada reserva es una fila y un permiso de escritura: no se acumulan.
+      const pending = await tx.file.count({
+        where: { uploadedById: access.userId, status: 'PENDING', deletedAt: null },
+      });
+      if (pending >= MAX_PENDING_UPLOADS) {
+        throw new ProblemException({
+          type: INBOX_PROBLEMS.UPLOAD_LIMIT,
+          title: 'Tienes demasiadas subidas sin terminar',
+          status: HttpStatus.TOO_MANY_REQUESTS,
+          detail: `Puedes tener ${MAX_PENDING_UPLOADS} archivos subiéndose a la vez. Termina o cancela los anteriores e inténtalo de nuevo.`,
+        });
+      }
+
+      const file = await tx.file.create({
+        data: {
+          tenantId: access.tenantId,
+          storageKey: key,
+          bucket: storage.bucket,
+          originalName: input.filename,
+          mimeType: input.mimeType,
+          sizeBytes: input.sizeBytes,
+          purpose: 'WHATSAPP_MEDIA',
+          status: 'PENDING',
+          uploadedById: access.userId,
+          scanStatus: 'SKIPPED',
+          scanResult: 'sin antivirus configurado',
+        },
+        select: { id: true },
+      });
+      return file.id;
+    });
+
+    const expiresInSeconds = storage.urlTtlSeconds;
+    const url = await storage.signedPutUrl(key, {
+      expiresInSeconds,
+      contentType: input.mimeType,
+      contentLength: input.sizeBytes,
+    });
+    return {
+      fileId,
+      url,
+      expiresAt: new Date(Date.now() + expiresInSeconds * 1000).toISOString(),
+      // El PUT tiene que enviarlas EXACTAS: van dentro de la firma.
+      headers: { 'Content-Type': input.mimeType },
+    };
+  }
+
+  /**
    * Responde por WhatsApp. Responder a una conversación sin asignar la toma:
    * quien contesta es quien la lleva, y así dos agentes no contestan a la vez
    * al mismo cliente sin saberlo.
    */
-  async send(access: ResolvedAccess, id: string, body: string): Promise<MessageView> {
+  async send(access: ResolvedAccess, id: string, input: SendMessageInput): Promise<MessageView> {
     const writable = await this.visibleWhere(access, 'conversation:write');
     const now = new Date();
+    const body = input.body?.trim() ? input.body.trim() : null;
+
+    // El archivo se comprueba ANTES de la transacción: son llamadas al
+    // almacenamiento, y no deben tener abierta una transacción esperando.
+    const attachment = input.fileId ? await this.verifyUpload(access, input.fileId, body) : null;
 
     const { message, event, sender } = await runInTenantTransaction(async (tx) => {
       // Bloquea la fila: dos envíos simultáneos a una conversación sin asignar
@@ -326,13 +444,34 @@ export class InboxService {
       if (!conversation) throw notFound('Conversación');
       assertCanSend(conversation, now);
 
+      if (attachment) {
+        // Sólo un mensaje puede llevarse este archivo: si otro envío se
+        // adelantó, ya no está PENDING y esto afecta a 0 filas.
+        const claimed = await tx.file.updateMany({
+          where: { id: attachment.fileId, status: 'PENDING' },
+          data: {
+            status: 'READY',
+            readyAt: now,
+            mimeType: attachment.mimeType,
+            sizeBytes: attachment.sizeBytes,
+          },
+        });
+        if (claimed.count === 0) {
+          throw conflict(
+            'Ese archivo ya se envió',
+            'Adjúntalo otra vez si quieres volver a enviarlo.',
+            INBOX_PROBLEMS.UPLOAD_USED,
+          );
+        }
+      }
+
       const created = await tx.message.create({
         data: {
           tenantId: access.tenantId,
           conversationId: id,
           channelId: conversation.channelId,
           direction: 'OUTBOUND',
-          type: 'TEXT',
+          type: attachment ? attachment.messageType : 'TEXT',
           body,
           status: 'QUEUED',
           statusUpdatedAt: now,
@@ -343,12 +482,27 @@ export class InboxService {
         select: { id: true, createdAt: true },
       });
 
+      if (attachment) {
+        await tx.messageMedia.create({
+          data: {
+            tenantId: access.tenantId,
+            messageId: created.id,
+            fileId: attachment.fileId,
+            mimeType: attachment.mimeType,
+            filename: attachment.filename,
+            sizeBytes: attachment.sizeBytes,
+            caption: body,
+            downloadedAt: now,
+          },
+        });
+      }
+
       const takes = conversation.assigneeId === null;
       await tx.conversation.update({
         where: { id },
         data: {
           lastMessageAt: now,
-          lastMessagePreview: body.length > 200 ? `${body.slice(0, 197)}…` : body,
+          lastMessagePreview: preview(attachment?.kind ?? null, body),
           lastMessageDirection: 'OUTBOUND',
           // Quien responde ya leyó lo anterior.
           unreadCount: 0,
@@ -378,15 +532,159 @@ export class InboxService {
     return {
       id: message.id,
       direction: 'OUTBOUND',
-      type: 'TEXT',
+      type: attachment ? attachment.messageType : 'TEXT',
       body,
       status: 'QUEUED',
       errorMessage: null,
       sender,
-      // Los adjuntos salientes llegan en el paso 6.
-      media: null,
+      media: attachment
+        ? {
+            id: attachment.fileId,
+            status: 'ready',
+            mimeType: attachment.mimeType,
+            filename: attachment.filename,
+            sizeBytes: attachment.sizeBytes,
+            error: null,
+          }
+        : null,
       createdAt: message.createdAt.toISOString(),
     };
+  }
+
+  /**
+   * Comprueba el objeto que el navegador subió: que exista, su tamaño real y
+   * su tipo REAL por número mágico. Lo declarado al reservar no decide nada.
+   *
+   * Si no cuadra, el archivo queda REJECTED y el objeto se borra: no se envía
+   * a un cliente algo que no es lo que dijo ser, y no queda basura.
+   */
+  private async verifyUpload(
+    access: ResolvedAccess,
+    fileId: string,
+    body: string | null,
+  ): Promise<{
+    fileId: string;
+    kind: MediaKind;
+    messageType: 'IMAGE' | 'AUDIO' | 'VIDEO' | 'DOCUMENT' | 'STICKER';
+    mimeType: string;
+    filename: string;
+    sizeBytes: number;
+  }> {
+    const storage = this.requireStorage();
+    const file = await runInTenantTransaction((tx) =>
+      tx.file.findFirst({
+        // Sólo quien reservó la subida puede adjuntarla: `file` no cuelga de
+        // ninguna conversación, y el destino ya exige permiso de escritura.
+        where: { id: fileId, deletedAt: null, uploadedById: access.userId },
+        select: {
+          id: true,
+          status: true,
+          storageKey: true,
+          originalName: true,
+          mimeType: true,
+          rejectReason: true,
+          tenantId: true,
+        },
+      }),
+    );
+    if (!file || file.tenantId !== access.tenantId) throw notFound('Archivo');
+    if (file.status === 'READY') {
+      throw conflict(
+        'Ese archivo ya se envió',
+        'Adjúntalo otra vez si quieres volver a enviarlo.',
+        INBOX_PROBLEMS.UPLOAD_USED,
+      );
+    }
+    if (file.status !== 'PENDING') {
+      throw new ProblemException({
+        type: INBOX_PROBLEMS.UPLOAD_INVALID,
+        title: 'El archivo no se puede enviar',
+        status: HttpStatus.BAD_REQUEST,
+        detail: file.rejectReason ?? 'Se descartó al comprobarlo. Vuelve a adjuntarlo.',
+      });
+    }
+    assertTenantKey(access.tenantId, file.storageKey);
+
+    const reject = async (detail: string): Promise<never> => {
+      await runInTenantTransaction((tx) =>
+        tx.file.updateMany({
+          where: { id: file.id, status: 'PENDING' },
+          data: { status: 'REJECTED', rejectReason: detail.slice(0, 300) },
+        }),
+      );
+      await storage.delete([file.storageKey]).catch((error: Error) => {
+        this.logger.error(`No se pudo borrar un archivo rechazado: ${error.message}`);
+      });
+      throw new ProblemException({
+        type: INBOX_PROBLEMS.UPLOAD_INVALID,
+        title: 'El archivo no se puede enviar',
+        status: HttpStatus.BAD_REQUEST,
+        detail,
+      });
+    };
+
+    const info = await storage.head(file.storageKey);
+    if (!info) {
+      throw new ProblemException({
+        type: INBOX_PROBLEMS.UPLOAD_INVALID,
+        title: 'El archivo no llegó a subirse',
+        status: HttpStatus.BAD_REQUEST,
+        detail: 'Vuelve a adjuntarlo: la subida no se completó.',
+      });
+    }
+
+    const head = await storage.getRange(file.storageKey, SNIFF_BYTES);
+    const real = resolveMime(info.contentType, sniffMime(head));
+    const check = real ? checkMedia({ mime: real, sizeBytes: info.sizeBytes }) : null;
+    if (!real || !check?.ok || !canSend(check.kind)) {
+      return reject(
+        check && !check.ok
+          ? check.reason
+          : 'El contenido del archivo no es de un tipo que WhatsApp permita enviar',
+      );
+    }
+    // Y tiene que ser de la MISMA categoría que se declaró al reservar: un
+    // HTML subido como «imagen» es texto, un tipo admitido, pero no una
+    // imagen. Misma regla que para lo que llega de Meta (paso 4).
+    if (mediaKindOf(file.mimeType) !== check.kind) {
+      return reject(`El contenido no es del tipo declarado (${file.mimeType})`);
+    }
+    // El archivo es válido: no se rechaza ni se borra, porque se puede
+    // reenviar sin texto.
+    if (body && !allowsCaption(check.kind)) {
+      throw new ProblemException({
+        type: PROBLEM_TYPES.VALIDATION,
+        title: 'Ese tipo de archivo no admite texto',
+        status: HttpStatus.BAD_REQUEST,
+        errors: [
+          {
+            field: 'body',
+            message: `WhatsApp no muestra texto junto a un ${MEDIA_LABELS[check.kind].toLowerCase()}: envíalo aparte`,
+          },
+        ],
+      });
+    }
+
+    return {
+      fileId: file.id,
+      kind: check.kind,
+      messageType: check.messageType,
+      mimeType: real,
+      filename: file.originalName,
+      sizeBytes: info.sizeBytes,
+    };
+  }
+
+  private requireStorage(): ObjectStorage {
+    if (!this.storage) {
+      throw new ProblemException({
+        type: PROBLEM_TYPES.UNAVAILABLE,
+        title: 'Los archivos no están disponibles',
+        status: HttpStatus.SERVICE_UNAVAILABLE,
+        detail: 'El almacenamiento no está configurado en este entorno.',
+      });
+    }
+    return this.storage;
   }
 
   /** Vuelve a intentar un mensaje que falló. Sigue exigiendo la ventana abierta. */
@@ -724,6 +1022,14 @@ function toSummary(row: SummaryRow): ConversationSummary {
     unreadCount: row.unreadCount,
     windowExpiresAt: row.windowExpiresAt?.toISOString() ?? null,
   };
+}
+
+/** Vista previa de la bandeja para un mensaje saliente. */
+function preview(kind: MediaKind | null, body: string | null): string {
+  const label = kind ? MEDIA_LABELS[kind] : null;
+  const text = body ?? '';
+  const value = label ? (text ? `${label}: ${text}` : label) : text;
+  return value.length > 200 ? `${value.slice(0, 197)}…` : value;
 }
 
 function toMediaView(media: {

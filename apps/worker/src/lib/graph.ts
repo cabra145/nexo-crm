@@ -35,11 +35,24 @@ export const INVALID_TOKEN_CODE = 190;
  *
  * `to` son los dígitos del número, sin «+» (así lo espera Meta).
  */
-export async function sendWhatsappText(
+export function sendWhatsappText(
   phoneNumberId: string,
   accessToken: string,
   to: string,
   body: string,
+): Promise<string> {
+  return sendMessage(phoneNumberId, accessToken, {
+    to,
+    type: 'text',
+    text: { preview_url: false, body },
+  });
+}
+
+/** Envía un mensaje ya compuesto y devuelve su wamid. */
+async function sendMessage(
+  phoneNumberId: string,
+  accessToken: string,
+  message: Record<string, unknown>,
 ): Promise<string> {
   const url = `${env.META_GRAPH_URL.replace(/\/$/, '')}/${env.META_GRAPH_VERSION}/${phoneNumberId}/messages`;
 
@@ -51,9 +64,7 @@ export async function sendWhatsappText(
       body: JSON.stringify({
         messaging_product: 'whatsapp',
         recipient_type: 'individual',
-        to,
-        type: 'text',
-        text: { preview_url: false, body },
+        ...message,
       }),
       signal: AbortSignal.timeout(15_000),
     });
@@ -69,19 +80,100 @@ export async function sendWhatsappText(
   if (!response.ok) {
     const code = payload.error?.code;
     const detail = payload.error?.error_data?.details;
-    const message = [payload.error?.message ?? `Meta respondió ${response.status}`, detail]
+    const text = [payload.error?.message ?? `Meta respondió ${response.status}`, detail]
       .filter(Boolean)
       .join(' — ');
     const retryable =
       response.status >= 500 ||
       response.status === 429 ||
       (code !== undefined && RATE_LIMIT_CODES.has(code));
-    throw new GraphSendError(message, retryable, code, response.status);
+    throw new GraphSendError(text, retryable, code, response.status);
   }
 
   const wamid = payload.messages?.[0]?.id;
   if (!wamid) throw new GraphSendError('Meta aceptó el mensaje pero no devolvió su id', false);
   return wamid;
+}
+
+/* ========================================================================== */
+/*  Envío de archivos                                                         */
+/* ========================================================================== */
+
+/**
+ * Sube un archivo a Meta y devuelve su id. Meta lo guarda 30 días, así que el
+ * id se conserva: un reintento del envío no vuelve a subir los bytes.
+ */
+export async function uploadWhatsappMedia(
+  phoneNumberId: string,
+  accessToken: string,
+  bytes: Buffer,
+  mimeType: string,
+  filename: string,
+): Promise<string> {
+  const url = `${env.META_GRAPH_URL.replace(/\/$/, '')}/${env.META_GRAPH_VERSION}/${phoneNumberId}/media`;
+  const form = new FormData();
+  form.set('messaging_product', 'whatsapp');
+  form.set('type', mimeType);
+  // Uint8Array.from y no el Buffer: el tipo de Blob exige un búfer propio.
+  form.set('file', new Blob([Uint8Array.from(bytes)], { type: mimeType }), filename);
+
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${accessToken}` },
+      body: form,
+      signal: AbortSignal.timeout(120_000),
+    });
+  } catch (cause) {
+    throw new GraphSendError(
+      `No se pudo subir el archivo a Meta: ${(cause as Error).message}`,
+      true,
+    );
+  }
+
+  const payload = (await response.json().catch(() => ({}))) as {
+    id?: string;
+    error?: { message?: string; code?: number };
+  };
+  if (!response.ok || !payload.id) {
+    const code = payload.error?.code;
+    const retryable =
+      response.status >= 500 ||
+      response.status === 429 ||
+      (code !== undefined && RATE_LIMIT_CODES.has(code));
+    throw new GraphSendError(
+      payload.error?.message ?? `Meta respondió ${response.status} al subir el archivo`,
+      retryable,
+      code,
+      response.status,
+    );
+  }
+  return payload.id;
+}
+
+/** Envía un mensaje con un archivo ya subido a Meta. */
+export function sendWhatsappMedia(
+  phoneNumberId: string,
+  accessToken: string,
+  to: string,
+  media: {
+    type: 'image' | 'audio' | 'video' | 'document';
+    mediaId: string;
+    caption?: string | null;
+    filename?: string | null;
+  },
+): Promise<string> {
+  return sendMessage(phoneNumberId, accessToken, {
+    to,
+    type: media.type,
+    [media.type]: {
+      id: media.mediaId,
+      // Meta sólo admite pie en imagen, vídeo y documento.
+      ...(media.caption && media.type !== 'audio' ? { caption: media.caption } : {}),
+      ...(media.type === 'document' && media.filename ? { filename: media.filename } : {}),
+    },
+  });
 }
 
 /* ========================================================================== */

@@ -1,10 +1,23 @@
-import { QUEUE_NAMES, type RealtimeEvent, whatsappOutboundJobSchema } from '@nexo/contracts';
+import {
+  MEDIA_POLICY,
+  mediaKindOf,
+  QUEUE_NAMES,
+  type RealtimeEvent,
+  whatsappOutboundJobSchema,
+} from '@nexo/contracts';
 import { decrypt, runInTenantTransaction } from '@nexo/database';
 import { UnrecoverableError } from 'bullmq';
 import { env } from '../bootstrap/env';
-import { GraphSendError, INVALID_TOKEN_CODE, sendWhatsappText } from '../lib/graph';
+import {
+  GraphSendError,
+  INVALID_TOKEN_CODE,
+  sendWhatsappMedia,
+  sendWhatsappText,
+  uploadWhatsappMedia,
+} from '../lib/graph';
 import { defineProcessor } from '../lib/processor';
 import { publishRealtime } from '../lib/realtime';
+import { storage } from '../lib/storage';
 
 /**
  * Envía a Meta un mensaje que un agente escribió en la bandeja.
@@ -35,6 +48,15 @@ export const whatsappOutboundProcessor = defineProcessor({
           conversationId: true,
           conversation: {
             select: { assigneeId: true, contact: { select: { whatsappE164: true } } },
+          },
+          media: {
+            select: {
+              id: true,
+              externalMediaId: true,
+              filename: true,
+              file: { select: { storageKey: true, mimeType: true, originalName: true } },
+            },
+            take: 1,
           },
           channel: {
             select: { id: true, status: true, externalId: true, credentialsEncrypted: true },
@@ -67,7 +89,8 @@ export const whatsappOutboundProcessor = defineProcessor({
       return fail('El canal está desconectado.');
     }
     if (!to) return fail('El contacto no tiene número de WhatsApp.');
-    if (!message.body) return fail('El mensaje está vacío.');
+    const attachment = message.media[0] ?? null;
+    if (!attachment && !message.body) return fail('El mensaje está vacío.');
 
     const { accessToken } = JSON.parse(
       decrypt(channel.credentialsEncrypted, env.ENCRYPTION_KEY),
@@ -75,7 +98,42 @@ export const whatsappOutboundProcessor = defineProcessor({
 
     let wamid: string;
     try {
-      wamid = await sendWhatsappText(channel.externalId, accessToken, to, message.body);
+      if (attachment) {
+        if (!attachment.file || !storage) return fail('El archivo adjunto no está disponible.');
+        const kind = mediaKindOf(attachment.file.mimeType);
+        if (!kind || kind === 'sticker') return fail('Ese tipo de archivo no se puede enviar.');
+
+        // Si un intento anterior ya lo subió, no se vuelven a mover los bytes:
+        // Meta conserva el archivo 30 días.
+        let mediaId = attachment.externalMediaId;
+        if (!mediaId) {
+          const bytes = await storage.getBytes(
+            attachment.file.storageKey,
+            MEDIA_POLICY[kind].maxBytes,
+          );
+          mediaId = await uploadWhatsappMedia(
+            channel.externalId,
+            accessToken,
+            bytes,
+            attachment.file.mimeType,
+            attachment.filename ?? attachment.file.originalName,
+          );
+          await runInTenantTransaction((tx) =>
+            tx.messageMedia.update({
+              where: { id: attachment.id },
+              data: { externalMediaId: mediaId },
+            }),
+          );
+        }
+        wamid = await sendWhatsappMedia(channel.externalId, accessToken, to, {
+          type: kind,
+          mediaId,
+          caption: message.body,
+          filename: attachment.filename ?? attachment.file.originalName,
+        });
+      } else {
+        wamid = await sendWhatsappText(channel.externalId, accessToken, to, message.body!);
+      }
     } catch (error) {
       if (!(error instanceof GraphSendError)) throw error;
       const lastAttempt = job.attemptsMade + 1 >= (job.opts.attempts ?? 1);

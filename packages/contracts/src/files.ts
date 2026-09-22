@@ -126,6 +126,27 @@ export function formatBytes(bytes: number): string {
   return `${bytes} B`;
 }
 
+/**
+ * Lo que un agente puede ENVIAR. Los stickers se reciben, pero no se envían:
+ * Meta exige un WebP con medidas y peso muy concretos, y rechazaría casi
+ * cualquier imagen que alguien adjunte desde el ordenador.
+ */
+export const SENDABLE_KINDS: MediaKind[] = ['image', 'audio', 'video', 'document'];
+export const canSend = (kind: MediaKind): boolean => SENDABLE_KINDS.includes(kind);
+
+/** WhatsApp sólo muestra pie en imagen, vídeo y documento. */
+export const allowsCaption = (kind: MediaKind): boolean =>
+  kind === 'image' || kind === 'video' || kind === 'document';
+
+/** Etiqueta para la vista previa de la bandeja: «Imagen», «Documento»… */
+export const MEDIA_LABELS: Record<MediaKind, string> = {
+  image: 'Imagen',
+  sticker: 'Sticker',
+  audio: 'Audio',
+  video: 'Vídeo',
+  document: 'Documento',
+};
+
 export type MediaCheck =
   | { ok: true; kind: MediaKind; messageType: KindPolicy['messageType']; extension: string }
   | { ok: false; reason: string };
