@@ -395,6 +395,31 @@ Sólo un READY se firma para descarga o se envía. Los PENDING antiguos son
 subidas abandonadas, y la limpieza periódica los borra; por eso la migración
 pasa a READY los archivos que ya existían.
 
+**Política de archivos** (`contracts/files.ts`), una sola para la web, la
+API y el worker. Los tipos son los que acepta WhatsApp Cloud API; cualquier
+otro se rechaza, y el tipo que se comprueba es siempre el DETECTADO.
+
+| Categoría | Tipos                               | Máximo |
+| --------- | ----------------------------------- | ------ |
+| Imagen    | JPEG, PNG                           | 5 MB   |
+| Sticker   | WebP                                | 500 KB |
+| Audio     | AAC, AMR, MP3, M4A, Ogg (Opus)      | 16 MB  |
+| Vídeo     | MP4, 3GP                            | 16 MB  |
+| Documento | PDF, texto, Word, Excel, PowerPoint | 25 MB  |
+
+- **Documentos hasta 25 MB, no los 100 de Meta**: en este bloque el worker
+  procesa cada archivo en memoria. Subirlo exige subida por partes y en flujo.
+- **Sólo imágenes, stickers, audio y vídeo se muestran en el navegador.** Los
+  PDF se descargan siempre (pueden llevar JavaScript, y no deben abrirse desde
+  el dominio del almacenamiento), igual que texto, Office y cualquier tipo
+  desconocido. SVG, HTML y GIF no se admiten nunca.
+- **La extensión de la clave sale del tipo detectado**, nunca del nombre.
+- **Ogg sólo con Opus**, como exige Meta; el códec no se comprueba: si Meta lo
+  rechaza, el mensaje queda fallido con su motivo.
+- La autoprueba comprueba que cada tipo admitido lo reconoce el detector de
+  @nexo/storage y al revés: admitir en la política un tipo que el detector no
+  produce, o servir los PDF en línea, la hace fallar (probado).
+
 **Un agujero entre empresas, cerrado.** `message_media` apuntaba a `message` y
 a `file` con claves foráneas simples, que Postgres comprueba SIN RLS: un
 adjunto de una empresa podía enlazarse al archivo (o al mensaje) de otra

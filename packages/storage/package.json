@@ -25,6 +25,7 @@
   },
   "devDependencies": {
     "@nexo/config": "workspace:*",
+    "@nexo/contracts": "workspace:*",
     "@types/node": "26.5.1",
     "eslint": "9.39.5",
     "tsx": "4.23.13",

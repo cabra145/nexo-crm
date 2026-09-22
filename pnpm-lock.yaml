@@ -510,6 +510,9 @@ importers:
       '@nexo/config':
         specifier: workspace:*
         version: link:../config
+      '@nexo/contracts':
+        specifier: workspace:*
+        version: link:../contracts
       '@types/node':
         specifier: 26.5.1
         version: 26.5.1

@@ -5,6 +5,15 @@
  *   pnpm --filter @nexo/storage selftest
  */
 import {
+  ACCEPT_ATTRIBUTE,
+  ALLOWED_MEDIA_TYPES,
+  checkMedia,
+  dispositionFor,
+  extensionFor,
+  MEDIA_POLICY,
+  mediaKindOf,
+} from '@nexo/contracts';
+import {
   assertTenantKey,
   contentDisposition,
   resolveMime,
@@ -236,6 +245,137 @@ check('nombre UTF-8 en filename*', cd.includes("filename*=UTF-8''Cotizaci%C3%B3n
 check(
   'conserva los espacios',
   contentDisposition('inline', 'mi foto.jpg').includes('filename="mi foto.jpg"'),
+);
+
+console.log('\nPolítica de archivos (contratos) frente al detector de tipos');
+// Un archivo de muestra por cada tipo admitido. Si la política admite un tipo
+// que el detector no produce, ese tipo sería imposible de subir; si el
+// detector produce uno que la política no conoce, se rechazaría siempre.
+const ZIP = [0x50, 0x4b, 0x03, 0x04];
+const OLE = [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1];
+const SAMPLES: Record<string, Uint8Array> = {
+  'image/jpeg': pad(bytes([0xff, 0xd8, 0xff, 0xe0])),
+  'image/png': pad(bytes([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])),
+  'image/webp': pad(bytes('RIFF', [0, 0, 0, 0], 'WEBPVP8 ')),
+  'audio/aac': pad(bytes([0xff, 0xf1, 0x50, 0x80])),
+  'audio/amr': pad(bytes('#!AMR\n')),
+  'audio/mpeg': pad(bytes('ID3', [4, 0])),
+  'audio/mp4': pad(bytes([0, 0, 0, 0x18], 'ftypM4A ')),
+  'audio/ogg': pad(bytes('OggS', [0])),
+  'video/mp4': pad(bytes([0, 0, 0, 0x18], 'ftypisom')),
+  'video/3gpp': pad(bytes([0, 0, 0, 0x18], 'ftyp3gp4')),
+  'application/pdf': pad(bytes('%PDF-1.7')),
+  'text/plain': new TextEncoder().encode('Pedido nº 12: 3 taladros'),
+  'application/msword': pad(bytes(OLE)),
+  'application/vnd.ms-excel': pad(bytes(OLE)),
+  'application/vnd.ms-powerpoint': pad(bytes(OLE)),
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': pad(bytes(ZIP)),
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': pad(bytes(ZIP)),
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation': pad(bytes(ZIP)),
+};
+const unreachable = ALLOWED_MEDIA_TYPES.filter(
+  (mime) => !SAMPLES[mime] || resolveMime(mime, sniffMime(SAMPLES[mime])) !== mime,
+);
+check(
+  `los ${ALLOWED_MEDIA_TYPES.length} tipos admitidos los reconoce el detector`,
+  unreachable.length === 0,
+  unreachable.join(', '),
+);
+const orphanSamples = Object.keys(SAMPLES).filter((mime) => !ALLOWED_MEDIA_TYPES.includes(mime));
+check(
+  'ninguna muestra de un tipo que la política no admite',
+  orphanSamples.length === 0,
+  orphanSamples.join(', '),
+);
+const badExtension = ALLOWED_MEDIA_TYPES.filter((mime) =>
+  throws(() => tenantKey(tenant, 'whatsapp-media', extensionFor(mime) ?? '')),
+);
+check(
+  'cada tipo tiene una extensión válida para las claves',
+  badExtension.length === 0,
+  badExtension.join(', '),
+);
+check(
+  'la extensión sale del tipo, no del nombre',
+  extensionFor('image/jpeg') === 'jpg' && extensionFor('audio/ogg; codecs=opus') === 'ogg',
+);
+check(
+  'el selector de la web ofrece exactamente los tipos admitidos',
+  ACCEPT_ATTRIBUTE.split(',').length === ALLOWED_MEDIA_TYPES.length,
+);
+
+console.log('\nLímites de tamaño');
+const MB = 1024 * 1024;
+const limit = (kind: keyof typeof MEDIA_POLICY) => MEDIA_POLICY[kind].maxBytes;
+check('imagen: 5 MB', limit('image') === 5 * MB);
+check('sticker: 500 KB', limit('sticker') === 500 * 1024);
+check('audio y vídeo: 16 MB', limit('audio') === 16 * MB && limit('video') === 16 * MB);
+check('documento: 25 MB', limit('document') === 25 * MB);
+for (const [mime, kind] of [
+  ['image/jpeg', 'image'],
+  ['image/webp', 'sticker'],
+  ['audio/ogg', 'audio'],
+  ['video/mp4', 'video'],
+  ['application/pdf', 'document'],
+] as const) {
+  const max = limit(kind);
+  check(
+    `${kind}: justo en el límite pasa; un byte más, no`,
+    checkMedia({ mime, sizeBytes: max }).ok && !checkMedia({ mime, sizeBytes: max + 1 }).ok,
+  );
+}
+const tooBig = checkMedia({ mime: 'image/png', sizeBytes: 6 * MB });
+check(
+  'el rechazo por tamaño dice el límite en palabras',
+  !tooBig.ok && tooBig.reason === 'la imagen supera el máximo de 5 MB (tiene 6 MB)',
+  tooBig.ok ? '' : tooBig.reason,
+);
+check('un archivo vacío se rechaza', !checkMedia({ mime: 'image/png', sizeBytes: 0 }).ok);
+
+console.log('\nTipos que nunca se admiten');
+for (const mime of [
+  'image/gif',
+  'image/svg+xml',
+  'text/html',
+  'application/zip',
+  'application/x-msdownload',
+  'application/octet-stream',
+  '',
+]) {
+  const result = checkMedia({ mime, sizeBytes: 100 });
+  check(`${mime || '(vacío)'} → rechazado`, !result.ok && mediaKindOf(mime) === null);
+}
+
+console.log('\nForma de entrega y tipo de mensaje');
+check(
+  'imágenes, stickers, audio y vídeo se muestran',
+  ['image/jpeg', 'image/png', 'image/webp', 'audio/ogg', 'video/mp4'].every(
+    (m) => dispositionFor(m) === 'inline',
+  ),
+);
+check(
+  'PDF, texto y Office se DESCARGAN (un PDF puede llevar JavaScript)',
+  [
+    'application/pdf',
+    'text/plain',
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  ].every((m) => dispositionFor(m) === 'attachment'),
+);
+check(
+  'un tipo desconocido se descarga',
+  dispositionFor('text/html') === 'attachment' && dispositionFor('image/svg+xml') === 'attachment',
+);
+const types = (['image/png', 'image/webp', 'audio/mpeg', 'video/3gpp', 'text/plain'] as const).map(
+  (mime) => {
+    const r = checkMedia({ mime, sizeBytes: 10 });
+    return r.ok ? r.messageType : null;
+  },
+);
+check(
+  'cada categoría se envía con su tipo de mensaje',
+  types.join() === 'IMAGE,STICKER,AUDIO,VIDEO,DOCUMENT',
+  types.join(),
 );
 
 console.log(`\n${total - failed}/${total} comprobaciones superadas`);

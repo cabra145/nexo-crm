@@ -18,3 +18,4 @@ export * from './deals';
 export * from './whatsapp';
 export * from './inbox';
 export * from './realtime';
+export * from './files';
