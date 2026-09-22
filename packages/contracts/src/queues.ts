@@ -40,6 +40,16 @@ export const QUEUE_NAMES = {
    * tipo real, tamaño) y guarda el archivo en el almacenamiento de la empresa.
    */
   WHATSAPP_MEDIA: 'whatsapp-media',
+  /**
+   * Mantenimiento. Hoy, un trabajo APLAZADO por reserva de subida: si pasadas
+   * unas horas sigue sin enviarse, borra su objeto y su fila.
+   *
+   * Aplazado por archivo y no un barrido de todas las empresas: el rol de la
+   * aplicación no puede saltarse la RLS (a propósito), así que un barrido
+   * global exigiría una identidad privilegiada que hoy no existe. Quien
+   * reserva sí conoce su empresa, y el trabajo corre en ese contexto.
+   */
+  MAINTENANCE: 'maintenance',
 } as const;
 
 export type QueueName = (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES];
@@ -103,6 +113,14 @@ export const QUEUE_POLICIES: Record<
     keepCompleted: { hours: 6, max: 2_000 },
     keepFailed: { days: 30 },
     concurrency: 4,
+  },
+  maintenance: {
+    // Si falla, el siguiente pase lo recoge: no hay prisa ni nada que perder.
+    attempts: 3,
+    backoffMs: 60_000,
+    keepCompleted: { hours: 72, max: 200 },
+    keepFailed: { days: 30 },
+    concurrency: 1,
   },
   audit: {
     // Sólo falla si la base de datos no responde. Se insiste bastante: perder
@@ -240,3 +258,20 @@ export const whatsappMediaJobSchema = z.object({
   tenantId: uuidSchema,
 });
 export type WhatsappMediaJob = z.infer<typeof whatsappMediaJobSchema>;
+
+/* ========================================================================== */
+/*  Cola `maintenance`                                                        */
+/* ========================================================================== */
+
+export const cleanupUploadJobSchema = z.object({
+  /** Reserva (`file` PENDING) que hay que revisar. */
+  fileId: uuidSchema,
+  tenantId: uuidSchema,
+});
+export type CleanupUploadJob = z.infer<typeof cleanupUploadJobSchema>;
+
+/**
+ * Id del trabajo aplazado de una reserva: uno por archivo, nunca dos. Sin
+ * «:», que BullMQ no admite en un id propio.
+ */
+export const cleanupJobId = (fileId: string): string => `limpieza-${fileId}`;

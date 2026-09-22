@@ -1,4 +1,5 @@
 import { HttpStatus, Inject, Injectable, Logger } from '@nestjs/common';
+import type { ApiEnv } from '@nexo/contracts';
 import {
   allowsCaption,
   canSend,
@@ -10,6 +11,8 @@ import {
   type ConversationListQuery,
   type ConversationSummary,
   INBOX_PROBLEMS,
+  type CleanupUploadJob,
+  cleanupJobId,
   MAX_PENDING_UPLOADS,
   MEDIA_LABELS,
   type MediaKind,
@@ -41,8 +44,9 @@ import type { Queue } from 'bullmq';
 import type { Request } from 'express';
 import { ProblemException } from '../common/problem.exception';
 import { traceIdOf } from '../common/trace-id';
+import { API_ENV } from '../config/config.module';
 import { AuditService } from '../queues/audit.service';
-import { WHATSAPP_OUTBOUND_QUEUE } from '../queues/queue-tokens';
+import { MAINTENANCE_QUEUE, WHATSAPP_OUTBOUND_QUEUE } from '../queues/queue-tokens';
 import { RealtimeService } from '../realtime/realtime.service';
 import { OBJECT_STORAGE } from '../storage/storage.module';
 import { AccessService, type ResolvedAccess } from '../team/access.service';
@@ -86,6 +90,8 @@ export class InboxService {
     private readonly audit: AuditService,
     private readonly realtime: RealtimeService,
     @Inject(WHATSAPP_OUTBOUND_QUEUE) private readonly outbound: Queue,
+    @Inject(MAINTENANCE_QUEUE) private readonly maintenance: Queue,
+    @Inject(API_ENV) private readonly env: ApiEnv,
     @Inject(OBJECT_STORAGE) private readonly storage: ObjectStorage | null,
   ) {}
 
@@ -397,6 +403,22 @@ export class InboxService {
       });
       return file.id;
     });
+
+    // Trabajo APLAZADO: si el archivo sigue sin enviarse pasado el plazo, se
+    // borran objeto y fila. Si se envía, al saltar no encuentra nada que
+    // borrar. Que falle encolarlo no debe impedir la subida: sólo dejaría una
+    // reserva que nadie recoge, y se avisa en el registro.
+    const job: CleanupUploadJob = { fileId, tenantId: access.tenantId };
+    await this.maintenance
+      .add(QUEUE_NAMES.MAINTENANCE, job, {
+        jobId: cleanupJobId(fileId),
+        delay: this.env.STORAGE_PENDING_TTL_HOURS * 3600_000,
+      })
+      .catch((error: Error) =>
+        this.logger.error(
+          `No se pudo programar la limpieza del archivo ${fileId}: ${error.message}`,
+        ),
+      );
 
     const expiresInSeconds = storage.urlTtlSeconds;
     const url = await storage.signedPutUrl(key, {

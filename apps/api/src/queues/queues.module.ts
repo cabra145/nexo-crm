@@ -14,6 +14,7 @@ import { MailService } from './mail.service';
 import {
   AUDIT_QUEUE,
   EMAIL_QUEUE,
+  MAINTENANCE_QUEUE,
   WHATSAPP_INBOUND_QUEUE,
   WHATSAPP_OUTBOUND_QUEUE,
 } from './queue-tokens';
@@ -59,8 +60,9 @@ class QueuesLifecycle implements OnApplicationShutdown {
     @Inject(AUDIT_QUEUE) private readonly audit: Queue,
     @Inject(WHATSAPP_INBOUND_QUEUE) private readonly whatsappInbound: Queue,
     @Inject(WHATSAPP_OUTBOUND_QUEUE) private readonly whatsappOutbound: Queue,
+    @Inject(MAINTENANCE_QUEUE) private readonly maintenance: Queue,
   ) {
-    for (const queue of [email, audit, whatsappInbound, whatsappOutbound]) {
+    for (const queue of [email, audit, whatsappInbound, whatsappOutbound, maintenance]) {
       queue.on('error', (error) => this.logger.warn(`Cola ${queue.name}: ${error.message}`));
     }
   }
@@ -71,6 +73,7 @@ class QueuesLifecycle implements OnApplicationShutdown {
       this.audit.close(),
       this.whatsappInbound.close(),
       this.whatsappOutbound.close(),
+      this.maintenance.close(),
     ]);
   }
 }
@@ -98,10 +101,21 @@ class QueuesLifecycle implements OnApplicationShutdown {
       inject: [API_ENV],
       useFactory: (env: ApiEnv) => createQueue(QUEUE_NAMES.WHATSAPP_OUTBOUND, env),
     },
+    {
+      provide: MAINTENANCE_QUEUE,
+      inject: [API_ENV],
+      useFactory: (env: ApiEnv) => createQueue(QUEUE_NAMES.MAINTENANCE, env),
+    },
     QueuesLifecycle,
     MailService,
     AuditService,
   ],
-  exports: [MailService, AuditService, WHATSAPP_INBOUND_QUEUE, WHATSAPP_OUTBOUND_QUEUE],
+  exports: [
+    MailService,
+    AuditService,
+    WHATSAPP_INBOUND_QUEUE,
+    WHATSAPP_OUTBOUND_QUEUE,
+    MAINTENANCE_QUEUE,
+  ],
 })
 export class QueuesModule {}

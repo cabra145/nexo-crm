@@ -450,6 +450,32 @@ el bucket con la base: cada objeto es un archivo READY y al revés. Quitar el
 SHA-256, el tipo real, la lista de dominios, la condición del enlace o el
 `phone_number_id` hace fallar sus comprobaciones (probado, las cinco a la vez).
 
+**Limpieza de subidas abandonadas** (cola `maintenance`). Al reservar, la API
+encola un trabajo **aplazado 24 h** (`STORAGE_PENDING_TTL_HOURS`) para ESE
+archivo, con su id como id del trabajo. Al saltar, si sigue siendo una reserva
+abandonada, borra primero el objeto y después la fila; si se envió, no
+encuentra nada que borrar.
+
+**Por qué no un barrido de todas las empresas**, que era el diseño inicial: el
+rol de la aplicación NO tiene `BYPASSRLS` (a propósito, ver `client.ts`), así
+que `platformPrisma` tampoco ve las tablas con política sin contexto de
+empresa. Un barrido global exigiría una identidad privilegiada, que es
+justamente lo que el proyecto dejó para el panel de plataforma de la Fase 6.
+Quien reserva sí conoce su empresa: el trabajo aplazado corre en ese contexto,
+con las mismas reglas que cualquier otra consulta. La cola queda lista para
+que, en la Fase 6, se le añada el barrido con esa identidad.
+
+Nunca toca un archivo ya enviado (READY), uno enlazado a un mensaje, uno más
+nuevo que el plazo ni uno de otro bucket. Que falle encolar la limpieza no
+impide subir: sólo deja una reserva que nadie recoge, y queda en el registro.
+
+**Una prueba que no probaba nada, corregida.** Las comprobaciones de «no toca
+lo guardado» y «no toca lo enlazado» pasaban aunque se quitaran las guardas:
+la primera porque el archivo era reciente (lo salvaba la fecha) y la segunda
+porque el fixture usaba otro bucket. Ahora se envejecen a propósito, el
+fixture usa el bucket real y se exige que el trabajo TERMINE bien, no que
+falle contra la clave foránea. Con las guardas quitadas, fallan.
+
 **Adjuntos que envía el agente** (`POST /conversations/:id/uploads` y el
 `fileId` en el envío). Tres fases: reservar, subir directo al almacenamiento y
 enviar. La API nunca recibe los bytes.

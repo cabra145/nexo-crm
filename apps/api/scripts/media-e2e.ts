@@ -864,6 +864,9 @@ async function main(): Promise<void> {
         sizeBytes: 10,
         purpose: 'ATTACHMENT',
         status: 'PENDING',
+        // El bucket real: si no, la limpieza lo saltaría por eso y la prueba
+        // no comprobaría lo que dice comprobar.
+        bucket: storage.bucket,
       },
       select: { id: true },
     });
@@ -1235,6 +1238,126 @@ async function main(): Promise<void> {
     await db.file.deleteMany({
       where: { tenantId: a.tenantId, status: 'PENDING', originalName: { startsWith: 'cola-' } },
     });
+
+    section('19 · Limpieza de subidas abandonadas');
+    const maintenance = new Queue(QUEUE_NAMES.MAINTENANCE, {
+      connection: { host: url.hostname, port: Number(url.port || 6379) },
+    });
+    /** Lanza la limpieza de un archivo sin esperar las 24 h del aplazamiento. */
+    const runCleanup = async (fileId: string, tenantId: string, label: string) => {
+      const job = await maintenance.add(
+        QUEUE_NAMES.MAINTENANCE,
+        { fileId, tenantId },
+        { jobId: `ahora-${label}-${run}` },
+      );
+      for (let i = 0; i < 100; i++) {
+        const state = await job.getState();
+        if (state === 'completed' || state === 'failed') return state;
+        await sleep(150);
+      }
+      return 'timeout';
+    };
+
+    const abandonedBytes = jpeg();
+    const abandoned = await reserve(a, conversationId!, {
+      filename: 'abandonada.jpg',
+      mimeType: 'image/jpeg',
+      sizeBytes: abandonedBytes.length,
+    });
+    await put(abandoned.body.url, abandoned.body.headers, abandonedBytes);
+    const abandonedRow = await db.file.findUniqueOrThrow({
+      where: { id: abandoned.body.fileId },
+      select: { storageKey: true },
+    });
+
+    // Reservar programa el trabajo aplazado, uno por archivo.
+    const scheduled = await maintenance.getJob(`limpieza-${abandoned.body.fileId}`);
+    const scheduledState = await scheduled?.getState();
+    check(
+      'reservar programa su limpieza, aplazada 24 h',
+      scheduledState === 'delayed' && Math.abs((scheduled?.opts.delay ?? 0) - 24 * 3600_000) < 1000,
+      `${scheduledState} · ${scheduled?.opts.delay}`,
+    );
+
+    // Aún reciente: al saltar, no borra nada.
+    const tooSoon = await runCleanup(abandoned.body.fileId, a.tenantId, 'pronto');
+    check(
+      'si todavía no ha pasado el plazo, no se borra nada',
+      tooSoon === 'completed' &&
+        (await db.file.count({ where: { id: abandoned.body.fileId } })) === 1,
+      tooSoon,
+    );
+
+    // Pasadas las 24 h: objeto y fila fuera.
+    await db.file.update({
+      where: { id: abandoned.body.fileId },
+      data: { createdAt: new Date(Date.now() - 48 * 3600 * 1000) },
+    });
+    const cleaned = await runCleanup(abandoned.body.fileId, a.tenantId, 'vieja');
+    check(
+      'pasado el plazo desaparecen la fila y el objeto',
+      cleaned === 'completed' &&
+        (await db.file.count({ where: { id: abandoned.body.fileId } })) === 0 &&
+        (await storage.head(abandonedRow.storageKey)) === null,
+      cleaned,
+    );
+
+    // Lo que NUNCA se toca.
+    const readyKey = foto!.file!.storageKey;
+    const readyFile = await db.file.findFirstOrThrow({
+      where: { storageKey: readyKey },
+      select: { id: true },
+    });
+    // Envejecido a propósito: lo que tiene que salvarlo es su ESTADO, no su
+    // fecha (sin esto, la prueba pasaba aunque se quitara la guarda).
+    await db.file.update({
+      where: { id: readyFile.id },
+      data: { createdAt: new Date(Date.now() - 48 * 3600 * 1000) },
+    });
+    const readyCleanup = await runCleanup(readyFile.id, a.tenantId, 'guardado');
+    check(
+      'un archivo ya guardado y viejo no se toca',
+      readyCleanup === 'completed' &&
+        (await db.file.count({ where: { id: readyFile.id, status: 'READY' } })) === 1 &&
+        (await storage.head(readyKey)) !== null,
+      readyCleanup,
+    );
+    await db.file.update({
+      where: { id: notReadyFile.id },
+      data: { createdAt: new Date(Date.now() - 48 * 3600 * 1000) },
+    });
+    const linkedCleanup = await runCleanup(notReadyFile.id, a.tenantId, 'enlazada');
+    check(
+      // Que TERMINE bien: si la limpieza intentara borrarla, chocaría con la
+      // clave foránea y el trabajo fallaría. Sobrevivir no basta.
+      'una reserva enlazada a un mensaje se deja en paz, sin siquiera intentarlo',
+      linkedCleanup === 'completed' &&
+        (await db.file.count({ where: { id: notReadyFile.id, status: 'PENDING' } })) === 1,
+      linkedCleanup,
+    );
+
+    // Aislamiento: con la empresa equivocada no encuentra nada (RLS).
+    const agentFile = await db.file.findFirstOrThrow({
+      where: { tenantId: a.tenantId, originalName: 'de-otro.jpg' },
+      select: { id: true, storageKey: true },
+    });
+    await db.file.update({
+      where: { id: agentFile.id },
+      data: { createdAt: new Date(Date.now() - 48 * 3600 * 1000) },
+    });
+    await runCleanup(agentFile.id, b.tenantId, 'otra-empresa');
+    check(
+      'con la empresa equivocada no borra nada: la RLS no le deja verlo',
+      (await db.file.count({ where: { id: agentFile.id } })) === 1 &&
+        (await storage.head(agentFile.storageKey)) !== null,
+    );
+    const ownCleanup = await runCleanup(agentFile.id, a.tenantId, 'propia');
+    check(
+      'con su empresa, sí',
+      ownCleanup === 'completed' && (await db.file.count({ where: { id: agentFile.id } })) === 0,
+      ownCleanup,
+    );
+    await maintenance.close();
 
     section('14 · El bucket y la base cuadran');
     for (const s of [a, b]) {

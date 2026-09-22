@@ -13,31 +13,33 @@ let mediaQueue: Queue | null = null;
  * conexión: si Redis no responde, encolar FALLA en el acto, y el trabajo que
  * encolaba se reintenta entero (ver whatsapp-inbound).
  */
+function createQueue(name: (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES]): Queue {
+  const policy = QUEUE_POLICIES[name];
+  const url = new URL(env.REDIS_URL);
+  return new Queue(name, {
+    connection: {
+      host: url.hostname,
+      port: Number(url.port || 6379),
+      password: url.password ? decodeURIComponent(url.password) : undefined,
+      db: url.pathname.length > 1 ? Number(url.pathname.slice(1)) : undefined,
+      maxRetriesPerRequest: 2,
+      enableOfflineQueue: false,
+      connectionName: `nexo-worker:${name}`,
+    },
+    defaultJobOptions: {
+      attempts: policy.attempts,
+      backoff: { type: 'exponential', delay: policy.backoffMs },
+      removeOnComplete: {
+        age: policy.keepCompleted.hours * 3600,
+        count: policy.keepCompleted.max,
+      },
+      removeOnFail: { age: policy.keepFailed.days * 86_400 },
+    },
+  });
+}
+
 function media(): Queue {
-  if (!mediaQueue) {
-    const policy = QUEUE_POLICIES[QUEUE_NAMES.WHATSAPP_MEDIA];
-    const url = new URL(env.REDIS_URL);
-    mediaQueue = new Queue(QUEUE_NAMES.WHATSAPP_MEDIA, {
-      connection: {
-        host: url.hostname,
-        port: Number(url.port || 6379),
-        password: url.password ? decodeURIComponent(url.password) : undefined,
-        db: url.pathname.length > 1 ? Number(url.pathname.slice(1)) : undefined,
-        maxRetriesPerRequest: 2,
-        enableOfflineQueue: false,
-        connectionName: `nexo-worker:${QUEUE_NAMES.WHATSAPP_MEDIA}`,
-      },
-      defaultJobOptions: {
-        attempts: policy.attempts,
-        backoff: { type: 'exponential', delay: policy.backoffMs },
-        removeOnComplete: {
-          age: policy.keepCompleted.hours * 3600,
-          count: policy.keepCompleted.max,
-        },
-        removeOnFail: { age: policy.keepFailed.days * 86_400 },
-      },
-    });
-  }
+  mediaQueue ??= createQueue(QUEUE_NAMES.WHATSAPP_MEDIA);
   return mediaQueue;
 }
 

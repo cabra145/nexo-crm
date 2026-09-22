@@ -105,6 +105,12 @@ export const storageEnv = {
   S3_FORCE_PATH_STYLE: z.preprocess(emptyAsUndefined, bool.optional()),
   /** Vida de las URL firmadas, en segundos. */
   STORAGE_URL_TTL_SECONDS: z.coerce.number().int().min(30).max(3600).default(300),
+  /**
+   * Horas que sobrevive una subida reservada y nunca enviada. Pasadas, el
+   * trabajo aplazado borra su objeto y su fila. La API lo usa para aplazar
+   * ese trabajo; el worker, para comprobar la edad antes de borrar.
+   */
+  STORAGE_PENDING_TTL_HOURS: z.coerce.number().int().min(1).max(720).default(24),
 };
 
 /* ========================================================================== */
