@@ -208,6 +208,9 @@ importers:
       '@nexo/database':
         specifier: workspace:*
         version: link:../../packages/database
+      '@nexo/storage':
+        specifier: workspace:*
+        version: link:../../packages/storage
       bullmq:
         specifier: 5.81.5
         version: 5.81.5(supports-color@8.1.1)
@@ -363,6 +366,9 @@ importers:
       '@nexo/database':
         specifier: workspace:*
         version: link:../../packages/database
+      '@nexo/storage':
+        specifier: workspace:*
+        version: link:../../packages/storage
       bullmq:
         specifier: 5.81.5
         version: 5.81.5(supports-color@8.1.1)

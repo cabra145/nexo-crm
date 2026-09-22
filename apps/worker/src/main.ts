@@ -9,6 +9,7 @@ import { logger } from './lib/logger';
 import { runProcessor } from './lib/processor';
 import { closeRealtime } from './lib/realtime';
 import { createRedisConnection } from './lib/redis';
+import { checkStorage } from './lib/storage';
 import { processors } from './processors';
 import { closeEmailTransport } from './processors/email.processor';
 
@@ -30,6 +31,9 @@ async function main(): Promise<void> {
       `No se pudo conectar a PostgreSQL (${message}). Los trabajos que la usen fallarán y se reintentarán.`,
     );
   }
+
+  // --- Almacenamiento ---------------------------------------------------------
+  await checkStorage();
 
   // --- Colas -----------------------------------------------------------------
   const connection = createRedisConnection();

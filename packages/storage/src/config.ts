@@ -25,6 +25,7 @@ export interface StorageEnv {
   S3_ACCESS_KEY?: string;
   S3_SECRET_KEY?: string;
   S3_FORCE_PATH_STYLE?: boolean;
+  STORAGE_URL_TTL_SECONDS?: number;
 }
 
 export interface StorageConfig {
@@ -41,6 +42,8 @@ export interface StorageConfig {
   accessKeyId: string;
   secretAccessKey: string;
   forcePathStyle: boolean;
+  /** Vida de las URL firmadas, en segundos. */
+  urlTtlSeconds: number;
 }
 
 export class StorageConfigError extends Error {
@@ -78,8 +81,21 @@ export function resolveStorageConfig(env: StorageEnv): StorageConfig | null {
   if (!endpoint && provider === 'minio') {
     throw new StorageConfigError('con STORAGE_PROVIDER=minio hace falta S3_ENDPOINT');
   }
-  if (production && endpoint && !endpoint.startsWith('https://')) {
-    throw new StorageConfigError('en producción el endpoint tiene que ser https://');
+  const publicEndpoint = env.S3_PUBLIC_ENDPOINT ?? endpoint;
+  if (production) {
+    for (const [name, url] of [
+      ['S3_ENDPOINT', endpoint],
+      ['S3_PUBLIC_ENDPOINT', publicEndpoint],
+    ] as const) {
+      if (url && !isSecureUrl(url)) {
+        throw new StorageConfigError(`en producción ${name} tiene que ser https:// (${url})`);
+      }
+    }
+  }
+
+  const urlTtlSeconds = env.STORAGE_URL_TTL_SECONDS ?? 300;
+  if (!Number.isInteger(urlTtlSeconds) || urlTtlSeconds < 30 || urlTtlSeconds > 3600) {
+    throw new StorageConfigError('STORAGE_URL_TTL_SECONDS tiene que estar entre 30 y 3600');
   }
 
   const bucket = env.S3_BUCKET ?? 'nexo';
@@ -90,11 +106,25 @@ export function resolveStorageConfig(env: StorageEnv): StorageConfig | null {
   return {
     provider,
     endpoint,
-    publicEndpoint: env.S3_PUBLIC_ENDPOINT ?? endpoint,
+    publicEndpoint,
     region: env.S3_REGION ?? (provider === 'r2' ? 'auto' : 'us-east-1'),
     bucket,
     accessKeyId: env.S3_ACCESS_KEY,
     secretAccessKey: env.S3_SECRET_KEY,
     forcePathStyle: env.S3_FORCE_PATH_STYLE ?? provider === 'minio',
+    urlTtlSeconds,
   };
+}
+
+/**
+ * https, o http sólo hacia la propia máquina: los navegadores tratan
+ * localhost como contexto seguro, y el CI prueba en modo producción contra un
+ * MinIO local sin TLS. Un servidor real nunca tiene su almacenamiento ahí.
+ */
+function isSecureUrl(url: string): boolean {
+  const parsed = new URL(url);
+  if (parsed.protocol === 'https:') return true;
+  return (
+    parsed.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(parsed.hostname)
+  );
 }

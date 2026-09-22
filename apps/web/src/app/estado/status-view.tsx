@@ -16,7 +16,7 @@ import { cn } from '@/lib/utils';
 /* ========================================================================== */
 
 interface Check {
-  status: 'up' | 'down';
+  status: 'up' | 'down' | 'disabled';
   latencyMs?: number;
   detail?: string;
 }
@@ -27,6 +27,8 @@ interface Readiness {
     database: Check;
     redis: Check;
     tenantIsolation: Check;
+    /** Informativo: no cambia el estado general (ver la sonda en la API). */
+    storage?: Check;
   };
   timestamp?: string;
 }
@@ -49,6 +51,11 @@ const DEPENDENCIES: Array<{ key: keyof Readiness['checks']; name: string; descri
     key: 'tenantIsolation',
     name: 'Aislamiento entre empresas',
     description: 'Políticas RLS activas y forzadas en todas las tablas con datos de empresa',
+  },
+  {
+    key: 'storage',
+    name: 'Almacenamiento de archivos',
+    description: 'Adjuntos e imágenes, en un bucket privado compatible con S3',
   },
 ];
 
@@ -234,8 +241,20 @@ export function StatusView() {
                             {check.latencyMs !== undefined ? `${check.latencyMs} ms` : '—'}
                           </span>
                           <StatusPill
-                            tone={check.status === 'up' ? 'positive' : 'critical'}
-                            label={check.status === 'up' ? 'Operativo' : 'Caído'}
+                            tone={
+                              check.status === 'up'
+                                ? 'positive'
+                                : check.status === 'disabled'
+                                  ? 'neutral'
+                                  : 'critical'
+                            }
+                            label={
+                              check.status === 'up'
+                                ? 'Operativo'
+                                : check.status === 'disabled'
+                                  ? 'Desactivado'
+                                  : 'Caído'
+                            }
                           />
                         </>
                       ) : null}

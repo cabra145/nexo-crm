@@ -22,8 +22,11 @@ PG_PORT=55432
 REDIS_PORT=56379
 SMTP_PORT=51025
 MAILPIT_PORT=58025
+MINIO_PORT=59000
+# La misma imagen que infra/compose.yml (ver allí por qué esa etiqueta).
+MINIO_IMAGE=quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
 
-containers=("$PREFIX-postgres" "$PREFIX-redis" "$PREFIX-mailpit")
+containers=("$PREFIX-postgres" "$PREFIX-redis" "$PREFIX-mailpit" "$PREFIX-minio")
 
 teardown() {
   docker rm -f "${containers[@]}" >/dev/null 2>&1 || true
@@ -38,7 +41,7 @@ if command -v caffeinate >/dev/null 2>&1; then
   caffeinate -i -w $$ &
 fi
 
-for port in $PG_PORT $REDIS_PORT $SMTP_PORT $MAILPIT_PORT 44000 44100 43000 44200; do
+for port in $PG_PORT $REDIS_PORT $SMTP_PORT $MAILPIT_PORT $MINIO_PORT 44000 44100 43000 44200; do
   if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
     echo "El puerto $port está ocupado. Libéralo o detén la ejecución anterior." >&2
     exit 1
@@ -54,6 +57,9 @@ docker run -d --rm --name "$PREFIX-postgres" -p "$PG_PORT:5432" \
 docker run -d --rm --name "$PREFIX-redis" -p "$REDIS_PORT:6379" redis:7-alpine >/dev/null
 docker run -d --rm --name "$PREFIX-mailpit" -p "$SMTP_PORT:1025" -p "$MAILPIT_PORT:8025" \
   axllent/mailpit:v1.31.1 >/dev/null
+docker run -d --rm --name "$PREFIX-minio" -p "$MINIO_PORT:9000" \
+  -e MINIO_ROOT_USER=ci_minio -e MINIO_ROOT_PASSWORD=ci_minio_password \
+  "$MINIO_IMAGE" server /data >/dev/null
 
 # El contenedor de Postgres se inicializa con un servidor temporal y luego lo
 # reinicia; se espera al segundo "ready".
@@ -62,7 +68,7 @@ for _ in $(seq 1 60); do
   [[ "$ready" -ge 2 ]] && break
   sleep 1
 done
-echo "  ✓ Postgres :$PG_PORT · Redis :$REDIS_PORT · Mailpit :$MAILPIT_PORT"
+echo "  ✓ Postgres :$PG_PORT · Redis :$REDIS_PORT · Mailpit :$MAILPIT_PORT · MinIO :$MINIO_PORT"
 
 echo "▸ Chromium para las pruebas de navegador"
 # Se descarga una vez (~/Library/Caches/ms-playwright); después no hace nada.
@@ -84,5 +90,6 @@ env -i PATH="$PATH" HOME="$HOME" \
   SMTP_HOST=127.0.0.1 SMTP_PORT="$SMTP_PORT" MAILPIT_URL="http://127.0.0.1:$MAILPIT_PORT" \
   API_PORT=44000 WORKER_HEALTH_PORT=44100 WEB_PORT=43000 \
   META_GRAPH_URL=http://127.0.0.1:44200 \
+  S3_ENDPOINT="http://127.0.0.1:$MINIO_PORT" S3_ACCESS_KEY=ci_minio S3_SECRET_KEY=ci_minio_password \
   CI_LOG_DIR="$ROOT/.ci-logs" \
   bash infra/scripts/ci-integration.sh

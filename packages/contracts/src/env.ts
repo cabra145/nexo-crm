@@ -70,6 +70,44 @@ const baseSchema = z.object({
 });
 
 /* ========================================================================== */
+/*  Almacenamiento de objetos (API y worker)                                   */
+/* ========================================================================== */
+
+/**
+ * Cualquier servicio compatible con S3. Aquí sólo se valida el FORMATO; la
+ * coherencia (R2 sin cuenta, producción sin credenciales o sin https…) la
+ * decide `resolveStorageConfig` de @nexo/storage al arrancar, con el mismo
+ * resultado: el proceso no levanta y dice por qué.
+ */
+const emptyAsUndefined = (v: unknown) => (v === '' ? undefined : v);
+
+export const storageEnv = {
+  /** r2 (por defecto) | s3 | minio. Sólo cambia los valores por defecto. */
+  STORAGE_PROVIDER: z.enum(['r2', 's3', 'minio']).default('r2'),
+  /** Identificador de cuenta de Cloudflare: con él se deduce el endpoint de R2. */
+  R2_ACCOUNT_ID: z.preprocess(
+    emptyAsUndefined,
+    z
+      .string()
+      .regex(
+        /^[0-9a-f]{32}$/i,
+        'el identificador de cuenta de Cloudflare son 32 caracteres hexadecimales',
+      )
+      .optional(),
+  ),
+  S3_ENDPOINT: z.preprocess(emptyAsUndefined, z.string().url().optional()),
+  /** URL del almacenamiento vista desde el navegador, si no es la misma. */
+  S3_PUBLIC_ENDPOINT: z.preprocess(emptyAsUndefined, z.string().url().optional()),
+  S3_REGION: z.preprocess(emptyAsUndefined, z.string().optional()),
+  S3_BUCKET: z.string().default('nexo'),
+  S3_ACCESS_KEY: z.preprocess(emptyAsUndefined, z.string().optional()),
+  S3_SECRET_KEY: z.preprocess(emptyAsUndefined, z.string().optional()),
+  S3_FORCE_PATH_STYLE: z.preprocess(emptyAsUndefined, bool.optional()),
+  /** Vida de las URL firmadas, en segundos. */
+  STORAGE_URL_TTL_SECONDS: z.coerce.number().int().min(30).max(3600).default(300),
+};
+
+/* ========================================================================== */
 /*  API                                                                        */
 /* ========================================================================== */
 
@@ -98,13 +136,8 @@ export const apiEnvSchema = baseSchema.extend({
   SMTP_PASSWORD: z.string().optional(),
   SMTP_FROM: mailFrom.optional(),
 
-  /** Almacenamiento de objetos, compatible S3 (MinIO en local). */
-  S3_ENDPOINT: z.string().url().optional(),
-  S3_REGION: z.string().default('us-east-1'),
-  S3_BUCKET: z.string().default('nexo'),
-  S3_ACCESS_KEY: z.string().optional(),
-  S3_SECRET_KEY: z.string().optional(),
-  S3_FORCE_PATH_STYLE: bool.default('true'),
+  /** Almacenamiento de objetos: ver `storageEnv`. */
+  ...storageEnv,
 
   /** Fase 3. Vacío = el módulo de IA queda desactivado, no roto. */
   OPENAI_API_KEY: z.string().optional(),
@@ -151,12 +184,7 @@ export const workerEnvSchema = baseSchema.extend({
   SMTP_PASSWORD: z.string().optional(),
   SMTP_FROM: mailFrom.optional(),
 
-  S3_ENDPOINT: z.string().url().optional(),
-  S3_REGION: z.string().default('us-east-1'),
-  S3_BUCKET: z.string().default('nexo'),
-  S3_ACCESS_KEY: z.string().optional(),
-  S3_SECRET_KEY: z.string().optional(),
-  S3_FORCE_PATH_STYLE: bool.default('true'),
+  ...storageEnv,
 
   OPENAI_API_KEY: z.string().optional(),
   META_GRAPH_VERSION: z.string().default('v21.0'),

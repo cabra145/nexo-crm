@@ -14,6 +14,7 @@
   "dependencies": {
     "@nexo/contracts": "workspace:*",
     "@nexo/database": "workspace:*",
+    "@nexo/storage": "workspace:*",
     "bullmq": "5.81.5",
     "ioredis": "5.11.1",
     "nodemailer": "8.0.11",

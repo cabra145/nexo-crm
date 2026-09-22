@@ -13,6 +13,7 @@ import { DatabaseModule } from './database/database.module';
 import { HealthModule } from './health/health.module';
 import { QueuesModule } from './queues/queues.module';
 import { RedisModule } from './redis/redis.module';
+import { StorageModule } from './storage/storage.module';
 import { CrmModule } from './crm/crm.module';
 import { WhatsappModule } from './whatsapp/whatsapp.module';
 import { InboxModule } from './inbox/inbox.module';
@@ -108,6 +109,7 @@ const INCOMING_TRACE_ID = /^[A-Za-z0-9_-]{8,64}$/;
 
     DatabaseModule,
     RedisModule,
+    StorageModule,
     QueuesModule,
     HealthModule,
     AuthModule,

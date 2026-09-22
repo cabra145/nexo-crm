@@ -1,4 +1,5 @@
 import type { Readable } from 'node:stream';
+import type { StorageProvider } from './config';
 
 /**
  * Almacenamiento de objetos, sin proveedor.
@@ -15,6 +16,16 @@ import type { Readable } from 'node:stream';
 export interface ObjectStorage {
   /** Nombre del bucket, para guardarlo junto a cada archivo. */
   readonly bucket: string;
+  /** Sólo para registros y la sonda de salud: la lógica no depende de él. */
+  readonly provider: StorageProvider;
+  /** Vida por defecto de las URL firmadas, en segundos. */
+  readonly urlTtlSeconds: number;
+
+  /**
+   * Comprueba que el bucket existe y que las credenciales dan acceso. Se usa
+   * al arrancar y en la sonda de salud; lanza un error legible si no.
+   */
+  checkAccess(): Promise<void>;
 
   /** Sube un objeto completo. */
   put(input: PutObjectInput): Promise<void>;
@@ -70,6 +81,20 @@ export interface SignedPutOptions {
   expiresInSeconds: number;
   contentType: string;
   contentLength: number;
+}
+
+/**
+ * Sin acceso al bucket. `reason` no nombra el bucket: se puede mostrar en una
+ * sonda pública; el mensaje completo, con el nombre, es para los registros.
+ */
+export class StorageAccessError extends Error {
+  constructor(
+    readonly bucket: string,
+    readonly reason: string,
+  ) {
+    super(`Almacenamiento no disponible (bucket «${bucket}»): ${reason}`);
+    this.name = 'StorageAccessError';
+  }
 }
 
 /** El objeto no existe (o no en esa clave). */

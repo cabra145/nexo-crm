@@ -369,6 +369,31 @@ un contacto» fallaba a veces: la ficha se actualiza un instante antes de que el
 diálogo de edición se cierre, y «Cliente» coincidía también con la opción del
 selector del diálogo. La prueba ahora espera al cierre del diálogo.
 
+### Almacenamiento de archivos — bloque 2.3a
+
+Cloudflare R2 por defecto, sin depender de él: `@nexo/storage` define la
+interfaz `ObjectStorage` y una única implementación sobre la API S3. El
+proveedor (`STORAGE_PROVIDER` = `r2`, `s3` o `minio`) sólo cambia los valores
+por defecto —endpoint, región, estilo de ruta—; la lógica de negocio no lo
+conoce. Pasar a S3 o a MinIO es cambiar variables de entorno.
+
+| Decisión                                                            | Por qué                                                                                                                                                                     |
+| ------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Una implementación S3, no una por proveedor**                     | Los tres hablan la misma API. Ramas por proveedor serían código que divergiría sin que nadie lo probara                                                                     |
+| **Claves `tenants/{empresa}/{propósito}/{año}/{mes}/{uuid}.{ext}`** | Todo lo de una empresa bajo un prefijo (borrar, exportar, medir, reglas de ciclo de vida). El nombre original nunca entra en la clave; `assertTenantKey` es la última red   |
+| **Tipo real por número mágico**                                     | Lo que declara quien sube no se cree: un HTML renombrado a «.jpg» no pasa por imagen                                                                                        |
+| **Configuración validada al arrancar**                              | En producción, sin credenciales, sin `https` o sin acceso al bucket, la API y el worker no arrancan. El CI lo prueba con una clave equivocada                               |
+| **`https` salvo hacia la propia máquina**                           | El CI prueba en modo producción contra un MinIO local; los navegadores tratan `localhost` como contexto seguro. `localhost.atacante.com` no cuenta                          |
+| **El almacenamiento se informa en `/health/ready`, pero no decide** | Si R2 cae sólo fallan los archivos; sacar la API del balanceador cortaría también el chat y el inicio de sesión. La sonda es pública: da el motivo, no el nombre del bucket |
+| **Sumas CRC del SDK sólo cuando se exigen**                         | Las que el SDK de AWS añade por defecto desde 2025 no las admiten todos los compatibles con S3 en URLs firmadas                                                             |
+| **El bucket de producción se crea a mano**                          | `ensure-bucket` sólo actúa sobre MinIO: crear buckets exigiría dar a la aplicación permisos de administración                                                               |
+| **MinIO en el CI como paso, no como servicio**                      | Los servicios de GitHub Actions no admiten el comando del contenedor (`server /data`)                                                                                       |
+
+**Dos correcciones de este paso.** La regla `storage/` de `.gitignore`, de la
+plantilla inicial, ignoraba también `packages/storage`: ahora sólo aplica en
+la raíz. Y la autoprueba del texto UTF-8 construía bytes que no eran UTF-8
+(un byte por carácter); el detector hacía bien en rechazarlos.
+
 ### El particionado de `message` queda aplazado
 
 El plan lo daba por hecho desde el inicio. Prisma no puede crear una tabla

@@ -181,6 +181,50 @@ check(
   ),
 );
 
+check(
+  'en producción, http hacia la propia máquina sí (CI contra MinIO local)',
+  resolveStorageConfig({
+    ...keys,
+    NODE_ENV: 'production',
+    STORAGE_PROVIDER: 'minio',
+    S3_ENDPOINT: 'http://127.0.0.1:9000',
+  })?.endpoint === 'http://127.0.0.1:9000',
+);
+check(
+  'en producción, la URL pública (la del navegador) también tiene que ser https',
+  throws(
+    () =>
+      resolveStorageConfig({
+        ...keys,
+        NODE_ENV: 'production',
+        R2_ACCOUNT_ID: 'abc',
+        S3_PUBLIC_ENDPOINT: 'http://archivos.ejemplo.com',
+      }),
+    StorageConfigError,
+  ),
+);
+check(
+  'un host que sólo empieza por «localhost» no cuenta como local',
+  throws(
+    () =>
+      resolveStorageConfig({
+        ...keys,
+        NODE_ENV: 'production',
+        STORAGE_PROVIDER: 'minio',
+        S3_ENDPOINT: 'http://localhost.atacante.com',
+      }),
+    StorageConfigError,
+  ),
+);
+check('vida de las URL firmadas: 300 s por defecto', r2?.urlTtlSeconds === 300);
+check(
+  'vida de las URL firmadas fuera de 30–3600 → error',
+  throws(
+    () => resolveStorageConfig({ ...keys, R2_ACCOUNT_ID: 'x', STORAGE_URL_TTL_SECONDS: 86_400 }),
+    StorageConfigError,
+  ),
+);
+
 console.log('\nContent-Disposition');
 const cd = contentDisposition('attachment', 'Cotización "final"\r\nX-Evil: 1.pdf');
 check(

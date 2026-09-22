@@ -24,7 +24,8 @@
 #  compilar y tiene que apuntar a la API de ESTA ejecución. Se compila en
 #  .next-ci para no pisar el .next de un `pnpm dev` que esté en marcha.
 #
-#  Variables obligatorias: DATABASE_URL, DIRECT_DATABASE_URL, REDIS_URL.
+#  Variables obligatorias: DATABASE_URL, DIRECT_DATABASE_URL, REDIS_URL y el
+#  almacenamiento (S3_ENDPOINT, S3_ACCESS_KEY, S3_SECRET_KEY: un MinIO).
 #  Los secretos, si no llegan, se generan para esta ejecución.
 #
 #  Termina con código distinto de cero en el primer fallo, y deja los logs de
@@ -38,6 +39,9 @@ cd "$ROOT"
 : "${DATABASE_URL:?Falta DATABASE_URL (rol de aplicación)}"
 : "${DIRECT_DATABASE_URL:?Falta DIRECT_DATABASE_URL (rol dueño)}"
 : "${REDIS_URL:?Falta REDIS_URL}"
+: "${S3_ENDPOINT:?Falta S3_ENDPOINT (un MinIO para la prueba)}"
+: "${S3_ACCESS_KEY:?Falta S3_ACCESS_KEY}"
+: "${S3_SECRET_KEY:?Falta S3_SECRET_KEY}"
 
 # --- Valores por defecto de la ejecución -------------------------------------
 export NODE_ENV="${NODE_ENV:-production}"
@@ -56,6 +60,10 @@ export SMTP_HOST="${SMTP_HOST:-localhost}"
 export SMTP_PORT="${SMTP_PORT:-1025}"
 export SMTP_FROM="${SMTP_FROM:-Nexo CRM <no-responder@nexo.test>}"
 export MAILPIT_URL="${MAILPIT_URL:-http://localhost:8025}"
+# Almacenamiento: MinIO, el mismo código que con R2 en producción. En modo
+# producción se exige https salvo hacia la propia máquina (@nexo/storage).
+export STORAGE_PROVIDER="${STORAGE_PROVIDER:-minio}"
+export S3_BUCKET="${S3_BUCKET:-nexo-ci}"
 export ENCRYPTION_KEY="${ENCRYPTION_KEY:-$(openssl rand -hex 32)}"
 export JWT_ACCESS_SECRET="${JWT_ACCESS_SECRET:-$(openssl rand -base64 48 | tr -d '\n')}"
 export JWT_REFRESH_SECRET="${JWT_REFRESH_SECRET:-$(openssl rand -base64 48 | tr -d '\n')}"
@@ -138,6 +146,31 @@ pnpm --silent --filter @nexo/database test:isolation || fail "test:isolation"
 step "Alta de empresa con Prisma y el rol de aplicación"
 pnpm --silent --filter @nexo/database test:tenant-creation || fail "test:tenant-creation"
 
+step "Almacenamiento: bucket privado en MinIO"
+pnpm --silent --filter @nexo/storage ensure-bucket || fail "ensure-bucket"
+
+step "Sin acceso al almacenamiento, en producción ni la API ni el worker arrancan"
+# Con una clave equivocada tienen que SALIR con error y decir por qué, no
+# quedarse escuchando: un despliegue mal configurado se para aquí.
+expect_refusal() {
+  local name="$1" log="$2"; shift 2
+  S3_SECRET_KEY="clave-equivocada-$RANDOM" "$@" > "$log" 2>&1 &
+  local pid=$! waited=0
+  while kill -0 "$pid" 2>/dev/null && (( waited < 60 )); do sleep 1; waited=$((waited + 1)); done
+  if kill -0 "$pid" 2>/dev/null; then
+    kill "$pid" 2>/dev/null || true
+    fail "$name arrancó sin acceso al almacenamiento"
+  fi
+  local code=0
+  wait "$pid" || code=$?
+  [[ "$code" -ne 0 ]] || fail "$name salió con código 0 sin acceso al almacenamiento"
+  grep -q 'las credenciales no dan acceso al bucket' "$log" \
+    || { tail -n 20 "$log" >&2; fail "$name no explica que falla el almacenamiento"; }
+}
+expect_refusal "La API" "$CI_LOG_DIR/api-sin-almacenamiento.log" node apps/api/dist/main.js
+expect_refusal "El worker" "$CI_LOG_DIR/worker-sin-almacenamiento.log" node apps/worker/dist/main.js
+ok "los dos se niegan a arrancar y dicen que las credenciales no dan acceso"
+
 # --- 2 · API ------------------------------------------------------------------
 step "API"
 node apps/api/dist/main.js > "$CI_LOG_DIR/api.log" 2>&1 &
@@ -148,7 +181,10 @@ ok "arrancó (pid $API_PID)"
 readiness_status=$(curl -s -o "$CI_LOG_DIR/ready.json" -w '%{http_code}' "$API_URL/health/ready")
 [[ "$readiness_status" == "200" ]] || { cat "$CI_LOG_DIR/ready.json" >&2; fail "/health/ready respondió $readiness_status"; }
 grep -q '"status":"ready"' "$CI_LOG_DIR/ready.json" || fail "/health/ready no dice ready"
-ok "/health/ready → 200, base de datos, Redis y aislamiento operativos"
+grep -q '"storage":{"status":"up"' "$CI_LOG_DIR/ready.json" \
+  || { cat "$CI_LOG_DIR/ready.json" >&2; fail "/health/ready no ve el almacenamiento"; }
+grep -q "$S3_BUCKET" "$CI_LOG_DIR/ready.json" && fail "/health/ready (pública) revela el nombre del bucket"
+ok "/health/ready → 200, base de datos, Redis, aislamiento y almacenamiento operativos"
 
 not_found_headers=$(curl -s -D - -o "$CI_LOG_DIR/404.json" "$API_URL/ruta-que-no-existe")
 grep -qi '^HTTP/1.1 404' <<<"$not_found_headers" || fail "una ruta inexistente no devolvió 404"

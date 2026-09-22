@@ -15,6 +15,7 @@
     "dev": "tsc -p tsconfig.build.json --watch --preserveWatchOutput",
     "typecheck": "tsc --noEmit",
     "selftest": "tsx scripts/selftest.ts",
+    "ensure-bucket": "node --env-file-if-exists=../../.env --import tsx scripts/ensure-bucket.ts",
     "clean": "rm -rf dist node_modules .turbo",
     "lint": "eslint . --max-warnings=0"
   },

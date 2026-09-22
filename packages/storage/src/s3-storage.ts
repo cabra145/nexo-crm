@@ -2,6 +2,7 @@ import type { Readable } from 'node:stream';
 import {
   DeleteObjectsCommand,
   GetObjectCommand,
+  HeadBucketCommand,
   HeadObjectCommand,
   NoSuchKey,
   NotFound,
@@ -10,7 +11,7 @@ import {
   S3ServiceException,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-import type { StorageConfig } from './config';
+import type { StorageConfig, StorageProvider } from './config';
 import {
   type ObjectInfo,
   ObjectNotFoundError,
@@ -19,6 +20,7 @@ import {
   type PutObjectInput,
   type SignedGetOptions,
   type SignedPutOptions,
+  StorageAccessError,
 } from './object-storage';
 
 /** Una URL firmada nunca vive más de esto, se pida lo que se pida. */
@@ -33,11 +35,15 @@ const MAX_SIGNED_URL_SECONDS = 60 * 60;
  */
 export class S3ObjectStorage implements ObjectStorage {
   readonly bucket: string;
+  readonly provider: StorageProvider;
+  readonly urlTtlSeconds: number;
   private readonly client: S3Client;
   private readonly signer: S3Client;
 
   constructor(config: StorageConfig) {
     this.bucket = config.bucket;
+    this.provider = config.provider;
+    this.urlTtlSeconds = config.urlTtlSeconds;
     const base = {
       region: config.region,
       forcePathStyle: config.forcePathStyle,
@@ -51,6 +57,22 @@ export class S3ObjectStorage implements ObjectStorage {
     };
     this.client = new S3Client({ ...base, endpoint: config.endpoint });
     this.signer = new S3Client({ ...base, endpoint: config.publicEndpoint });
+  }
+
+  async checkAccess(): Promise<void> {
+    try {
+      await this.client.send(new HeadBucketCommand({ Bucket: this.bucket }));
+    } catch (error) {
+      const status =
+        error instanceof S3ServiceException ? error.$metadata.httpStatusCode : undefined;
+      const reason =
+        status === 404
+          ? 'el bucket no existe'
+          : status === 403
+            ? 'las credenciales no dan acceso al bucket'
+            : (error as Error).message;
+      throw new StorageAccessError(this.bucket, reason);
+    }
   }
 
   async put(input: PutObjectInput): Promise<void> {

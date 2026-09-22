@@ -5,10 +5,12 @@ import type { Response } from 'express';
 import type Redis from 'ioredis';
 import { Public } from '../auth/decorators';
 import { DatabaseService } from '../database/database.service';
+import { type ObjectStorage, StorageAccessError } from '@nexo/storage';
 import { REDIS } from '../redis/redis.module';
+import { OBJECT_STORAGE } from '../storage/storage.module';
 
 interface Check {
-  status: 'up' | 'down';
+  status: 'up' | 'down' | 'disabled';
   latencyMs?: number;
   detail?: string;
 }
@@ -48,7 +50,8 @@ async function timed(run: () => Promise<string | void>): Promise<Check> {
  *   GET /health        → ¿está vivo el proceso? No toca dependencias. Si esto
  *                        falla, hay que reiniciar el contenedor.
  *   GET /health/ready  → ¿puede atender tráfico? Comprueba Postgres, Redis y
- *                        el aislamiento entre empresas. Si esto falla, hay que
+ *                        el aislamiento entre empresas (e informa del
+ *                        almacenamiento, sin que decida). Si esto falla, hay que
  *                        dejar de enviarle tráfico, NO reiniciarlo.
  *
  * Mezclarlas en una sola es un error clásico: una caída breve de Redis
@@ -62,6 +65,7 @@ export class HealthController {
   constructor(
     private readonly db: DatabaseService,
     @Inject(REDIS) private readonly redis: Redis,
+    @Inject(OBJECT_STORAGE) private readonly storage: ObjectStorage | null,
   ) {}
 
   @Get()
@@ -79,7 +83,7 @@ export class HealthController {
   @Get('ready')
   @ApiOperation({ summary: 'Sonda de disponibilidad: dependencias y aislamiento' })
   async readiness(@Res({ passthrough: true }) res: Response) {
-    const [database, redis, tenantIsolation] = await Promise.all([
+    const [database, redis, tenantIsolation, storage] = await Promise.all([
       timed(async () => {
         await this.db.platform.$queryRaw`SELECT 1`;
       }),
@@ -100,14 +104,26 @@ export class HealthController {
         }
         return 'todas las tablas con tenant_id tienen RLS forzada';
       }),
+      this.storage
+        ? timed(async () => {
+            // Esta sonda es pública: el motivo sí, el nombre del bucket no.
+            await this.storage!.checkAccess().catch((error: unknown) => {
+              throw error instanceof StorageAccessError ? new Error(error.reason) : error;
+            });
+          })
+        : Promise.resolve<Check>({ status: 'disabled', detail: 'sin credenciales' }),
     ]);
 
+    // El almacenamiento se informa pero NO decide la disponibilidad: si R2 cae,
+    // sólo fallan los archivos, y sacar la API del balanceador cortaría también
+    // el chat, el CRM y el inicio de sesión. Al ARRANCAR sí es obligatorio
+    // (StorageModule).
     const ready = [database, redis, tenantIsolation].every((c) => c.status === 'up');
     res.status(ready ? 200 : 503);
 
     return {
       status: ready ? 'ready' : 'degraded',
-      checks: { database, redis, tenantIsolation },
+      checks: { database, redis, tenantIsolation, storage },
       timestamp: new Date().toISOString(),
     };
   }
