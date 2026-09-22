@@ -1,12 +1,15 @@
 import { HttpStatus, Inject, Injectable, Logger } from '@nestjs/common';
 import {
+  dispositionFor,
   type ConversationCounts,
   type ConversationDetail,
   type ConversationList,
   type ConversationListQuery,
   type ConversationSummary,
   INBOX_PROBLEMS,
+  type MediaUrlView,
   type MessageListQuery,
+  type MessageMediaView,
   type MessagePage,
   type MessageView,
   type Permission,
@@ -16,6 +19,7 @@ import {
   type WhatsappOutboundJob,
 } from '@nexo/contracts';
 import { Prisma, runInTenantTransaction, type TenantTransactionClient } from '@nexo/database';
+import { assertTenantKey, type ObjectStorage } from '@nexo/storage';
 import type { Queue } from 'bullmq';
 import type { Request } from 'express';
 import { ProblemException } from '../common/problem.exception';
@@ -23,6 +27,7 @@ import { traceIdOf } from '../common/trace-id';
 import { AuditService } from '../queues/audit.service';
 import { WHATSAPP_OUTBOUND_QUEUE } from '../queues/queue-tokens';
 import { RealtimeService } from '../realtime/realtime.service';
+import { OBJECT_STORAGE } from '../storage/storage.module';
 import { AccessService, type ResolvedAccess } from '../team/access.service';
 import { conflict, notFound } from '../team/team.problems';
 
@@ -64,6 +69,7 @@ export class InboxService {
     private readonly audit: AuditService,
     private readonly realtime: RealtimeService,
     @Inject(WHATSAPP_OUTBOUND_QUEUE) private readonly outbound: Queue,
+    @Inject(OBJECT_STORAGE) private readonly storage: ObjectStorage | null,
   ) {}
 
   /* ======================================================================== */
@@ -154,6 +160,19 @@ export class InboxService {
           errorMessage: true,
           senderUserId: true,
           createdAt: true,
+          media: {
+            select: {
+              id: true,
+              fileId: true,
+              mimeType: true,
+              filename: true,
+              sizeBytes: true,
+              downloadError: true,
+              file: { select: { originalName: true, mimeType: true, sizeBytes: true } },
+            },
+            orderBy: { createdAt: 'asc' },
+            take: 1,
+          },
         },
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
         take: query.limit + 1,
@@ -179,10 +198,102 @@ export class InboxService {
         status: m.status,
         errorMessage: m.errorMessage,
         sender: m.senderUserId ? (byId.get(m.senderUserId) ?? null) : null,
+        media: m.media[0] ? toMediaView(m.media[0]) : null,
         createdAt: m.createdAt.toISOString(),
       }));
       return { data, hasMore };
     });
+  }
+
+  /**
+   * URL firmada para ver o descargar un archivo, válida unos minutos.
+   *
+   * Los bytes NO pasan por la API: el navegador los pide al almacenamiento.
+   * Por eso todo lo que decide cómo se sirve —tipo, mostrar o descargar,
+   * nombre— se firma aquí: un cliente no puede pedir que un PDF se abra en el
+   * navegador, ni cambiar la clave, sin romper la firma.
+   *
+   * Sin auditoría: son vistas normales de la bandeja, y una conversación con
+   * veinte fotos generaría veinte entradas cada vez que alguien la abre. Las
+   * acciones sensibles (exportaciones, documentos comerciales) sí se auditan.
+   */
+  async mediaUrl(
+    access: ResolvedAccess,
+    conversationId: string,
+    mediaId: string,
+  ): Promise<MediaUrlView> {
+    if (!this.storage) {
+      throw new ProblemException({
+        type: PROBLEM_TYPES.UNAVAILABLE,
+        title: 'Los archivos no están disponibles',
+        status: HttpStatus.SERVICE_UNAVAILABLE,
+        detail: 'El almacenamiento no está configurado en este entorno.',
+      });
+    }
+    // Mismo filtro que la bandeja: quien no ve la conversación no ve sus
+    // archivos, y recibe 404 (no 403): tampoco se le confirma que existan.
+    const visible = await this.visibleWhere(access, 'conversation:read');
+
+    const media = await runInTenantTransaction(async (tx) => {
+      const conversation = await tx.conversation.findFirst({
+        where: { AND: [{ id: conversationId }, visible] },
+        select: { id: true },
+      });
+      if (!conversation) throw notFound('Conversación');
+      return tx.messageMedia.findFirst({
+        // Tiene que ser de ESA conversación: el id de otra no sirve.
+        where: { id: mediaId, message: { conversationId } },
+        select: {
+          id: true,
+          tenantId: true,
+          downloadError: true,
+          filename: true,
+          file: {
+            select: {
+              storageKey: true,
+              mimeType: true,
+              originalName: true,
+              status: true,
+              deletedAt: true,
+              tenantId: true,
+            },
+          },
+        },
+      });
+    });
+    if (!media) throw notFound('Archivo');
+
+    const file = media.file;
+    if (!file || file.status !== 'READY' || file.deletedAt) {
+      throw new ProblemException({
+        type: INBOX_PROBLEMS.MEDIA_NOT_READY,
+        title: 'El archivo no está disponible',
+        status: HttpStatus.CONFLICT,
+        detail:
+          media.downloadError ?? 'Todavía se está guardando. Vuelve a intentarlo en unos segundos.',
+      });
+    }
+    // Última red, tras RLS y la clave foránea compuesta: la clave es de esta
+    // empresa o no se firma nada.
+    if (file.tenantId !== access.tenantId) throw notFound('Archivo');
+    assertTenantKey(access.tenantId, file.storageKey);
+
+    const expiresInSeconds = this.storage.urlTtlSeconds;
+    const filename = media.filename ?? file.originalName;
+    const disposition = dispositionFor(file.mimeType);
+    const url = await this.storage.signedGetUrl(file.storageKey, {
+      expiresInSeconds,
+      contentType: file.mimeType,
+      disposition,
+      filename,
+    });
+    return {
+      url,
+      expiresAt: new Date(Date.now() + expiresInSeconds * 1000).toISOString(),
+      filename,
+      mimeType: file.mimeType,
+      disposition,
+    };
   }
 
   /* ======================================================================== */
@@ -272,6 +383,8 @@ export class InboxService {
       status: 'QUEUED',
       errorMessage: null,
       sender,
+      // Los adjuntos salientes llegan en el paso 6.
+      media: null,
       createdAt: message.createdAt.toISOString(),
     };
   }
@@ -610,6 +723,25 @@ function toSummary(row: SummaryRow): ConversationSummary {
     lastMessageDirection: row.lastMessageDirection,
     unreadCount: row.unreadCount,
     windowExpiresAt: row.windowExpiresAt?.toISOString() ?? null,
+  };
+}
+
+function toMediaView(media: {
+  id: string;
+  fileId: string | null;
+  mimeType: string | null;
+  filename: string | null;
+  sizeBytes: number | null;
+  downloadError: string | null;
+  file: { originalName: string; mimeType: string; sizeBytes: number } | null;
+}): MessageMediaView {
+  return {
+    id: media.id,
+    status: media.file ? 'ready' : media.downloadError ? 'failed' : 'pending',
+    mimeType: media.file?.mimeType ?? media.mimeType,
+    filename: media.filename ?? media.file?.originalName ?? null,
+    sizeBytes: media.file?.sizeBytes ?? media.sizeBytes,
+    error: media.downloadError,
   };
 }
 

@@ -17,6 +17,7 @@ import {
   type ConversationList,
   conversationListQuerySchema,
   conversationStatusSchema,
+  type MediaUrlView,
   type MessagePage,
   messageListQuerySchema,
   type MessageView,
@@ -69,6 +70,19 @@ export class InboxController {
     query: z.infer<typeof messageListQuerySchema>,
   ): Promise<MessagePage> {
     return this.inbox.messages(access, id, query);
+  }
+
+  @Get(':id/media/:mediaId/url')
+  @RequirePermission('conversation:read')
+  @ApiOperation({
+    summary: 'URL firmada para ver o descargar un archivo (caduca en minutos)',
+  })
+  mediaUrl(
+    @CurrentAccess() access: ResolvedAccess,
+    @Param('id', uuid) id: string,
+    @Param('mediaId', uuid) mediaId: string,
+  ): Promise<MediaUrlView> {
+    return this.inbox.mediaUrl(access, id, mediaId);
   }
 
   @Post(':id/messages')

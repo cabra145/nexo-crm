@@ -85,6 +85,24 @@ export type MessageTypeName = (typeof MESSAGE_TYPES)[number];
 export const DELIVERY_STATUSES = ['QUEUED', 'SENT', 'DELIVERED', 'READ', 'FAILED'] as const;
 export type DeliveryStatus = (typeof DELIVERY_STATUSES)[number];
 
+/**
+ * El archivo de un mensaje, tal como lo ve la bandeja. NUNCA lleva la clave
+ * del almacenamiento ni una URL: la URL se pide aparte, firmada y de vida
+ * corta, sólo cuando se va a ver o descargar.
+ */
+export interface MessageMediaView {
+  id: string;
+  /** `ready`: descargado y comprobado. `pending`: en camino. `failed`: rechazado. */
+  status: 'ready' | 'pending' | 'failed';
+  /** Tipo REAL, el detectado al guardarlo; null mientras está pendiente. */
+  mimeType: string | null;
+  /** Nombre para mostrar y para la descarga. */
+  filename: string | null;
+  sizeBytes: number | null;
+  /** Motivo, si no se pudo guardar. */
+  error: string | null;
+}
+
 export interface MessageView {
   id: string;
   direction: 'INBOUND' | 'OUTBOUND';
@@ -93,7 +111,19 @@ export interface MessageView {
   status: DeliveryStatus;
   errorMessage: string | null;
   sender: { id: string; name: string } | null;
+  media: MessageMediaView | null;
   createdAt: string;
+}
+
+/** URL firmada para ver o descargar un archivo. */
+export interface MediaUrlView {
+  url: string;
+  /** Instante exacto en que deja de servir; la web la vuelve a pedir. */
+  expiresAt: string;
+  filename: string;
+  mimeType: string;
+  /** Lo decide el servidor y va DENTRO de la firma. */
+  disposition: 'inline' | 'attachment';
 }
 
 export const messageListQuerySchema = z.object({
@@ -139,4 +169,6 @@ export const INBOX_PROBLEMS = {
   CHANNEL_DISCONNECTED: 'https://nexo.app/problems/canal-desconectado',
   /** Otra persona la tomó antes. */
   ALREADY_ASSIGNED: 'https://nexo.app/problems/conversacion-ya-asignada',
+  /** El archivo aún no está descargado, o se rechazó al comprobarlo. */
+  MEDIA_NOT_READY: 'https://nexo.app/problems/archivo-no-disponible',
 } as const;

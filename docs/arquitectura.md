@@ -450,6 +450,27 @@ el bucket con la base: cada objeto es un archivo READY y al revés. Quitar el
 SHA-256, el tipo real, la lista de dominios, la condición del enlace o el
 `phone_number_id` hace fallar sus comprobaciones (probado, las cinco a la vez).
 
+**Descargas privadas con URL firmada** (`GET /conversations/:id/media/:mediaId/url`).
+Los bytes NO pasan por la API: el navegador los pide al almacenamiento con una
+URL firmada de 5 minutos (`STORAGE_URL_TTL_SECONDS`), y la respuesta dice
+cuándo caduca para volver a pedirla.
+
+- **Autorización, la de la conversación.** Mismo filtro de visibilidad que la
+  bandeja; quien no la ve recibe 404, no 403. El archivo tiene que ser de ESA
+  conversación, el `File` estar READY y no borrado, y su clave pasar
+  `assertTenantKey`: cuatro capas sobre la RLS y la clave foránea compuesta.
+- **Lo que decide el servidor va DENTRO de la firma**: el tipo, si se muestra o
+  se descarga (según la política del paso 3) y el nombre. Un cliente no puede
+  pedir que un PDF se abra en el navegador; cambiar cualquier parámetro de la
+  URL la invalida (403).
+- **Los mensajes traen el estado del archivo** (`ready`, `pending`, `failed` con
+  su motivo), nunca la clave ni una URL.
+- **Sin auditoría por cada imagen vista**: una conversación con veinte fotos
+  generaría veinte entradas cada vez que se abre. La auditoría queda para
+  descargas de documentos comerciales, exportaciones y acciones sensibles.
+- Quitar el filtro de visibilidad, dejar que el cliente elija la entrega o no
+  exigir READY hace fallar sus comprobaciones (probado).
+
 **Un agujero entre empresas, cerrado.** `message_media` apuntaba a `message` y
 a `file` con claves foráneas simples, que Postgres comprueba SIN RLS: un
 adjunto de una empresa podía enlazarse al archivo (o al mensaje) de otra

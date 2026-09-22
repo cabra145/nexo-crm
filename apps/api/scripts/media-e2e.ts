@@ -15,9 +15,9 @@
  *   META_GRAPH_URL=http://127.0.0.1:44200 META_MEDIA_HOSTS=127.0.0.1 \
  *     pnpm --filter @nexo/api media:e2e
  */
-import { createHash, createHmac, randomBytes } from 'node:crypto';
+import { createHash, createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
-import { QUEUE_NAMES } from '@nexo/contracts';
+import { INBOX_PROBLEMS, type MediaUrlView, QUEUE_NAMES } from '@nexo/contracts';
 import { PrismaClient } from '@nexo/database';
 import { createObjectStorage, tenantPrefix } from '@nexo/storage';
 import { Queue } from 'bullmq';
@@ -177,7 +177,13 @@ function mediaMessage(
   type: 'image' | 'audio' | 'document',
   mediaId: string,
   mime: string,
-  extra: { caption?: string; filename?: string; wamid?: string; entryId?: string } = {},
+  extra: {
+    caption?: string;
+    filename?: string;
+    wamid?: string;
+    entryId?: string;
+    from?: string;
+  } = {},
 ) {
   return {
     object: 'whatsapp_business_account',
@@ -190,10 +196,10 @@ function mediaMessage(
             value: {
               messaging_product: 'whatsapp',
               metadata: { display_phone_number: '593992000001', phone_number_id: phoneNumberId },
-              contacts: [{ wa_id: CLIENT, profile: { name: 'Cliente Archivos' } }],
+              contacts: [{ wa_id: extra.from ?? CLIENT, profile: { name: 'Cliente Archivos' } }],
               messages: [
                 {
-                  from: CLIENT,
+                  from: extra.from ?? CLIENT,
                   id: extra.wamid ?? `wamid.media.${run}.${++tick}`,
                   timestamp: String(Math.floor(Date.now() / 1000)),
                   type,
@@ -232,10 +238,19 @@ async function postWebhook(channelId: string, payload: unknown, secret: string):
 interface Session {
   accessToken: string;
   tenantId: string;
+  userId: string;
 }
 const sessionFrom = (res: HttpResult): Session => {
-  const body = res.body as { accessToken: string; activeTenant: { tenantId: string } };
-  return { accessToken: body.accessToken, tenantId: body.activeTenant.tenantId };
+  const body = res.body as {
+    accessToken: string;
+    user: { id: string };
+    activeTenant: { tenantId: string };
+  };
+  return {
+    accessToken: body.accessToken,
+    tenantId: body.activeTenant.tenantId,
+    userId: body.user.id,
+  };
 };
 
 async function main(): Promise<void> {
@@ -701,7 +716,240 @@ async function main(): Promise<void> {
     );
 
     /* ---------------------------------------------------------------------- */
-    section('10 · El bucket sólo tiene lo guardado');
+    section('11 · Descargas con URL firmada');
+    const mediaUrl = (s: Session, conversation: string, media: string) =>
+      http<MediaUrlView>('GET', `/conversations/${conversation}/media/${media}/url`, {
+        token: s.accessToken,
+      });
+
+    const signed = await mediaUrl(a, conversationId!, foto!.id);
+    check(
+      'una imagen: URL firmada, para mostrarla en el navegador',
+      signed.status === 200 &&
+        signed.body.disposition === 'inline' &&
+        signed.body.mimeType === 'image/jpeg' &&
+        signed.body.url.includes('X-Amz-Signature'),
+      `${signed.status} ${signed.body.disposition}`,
+    );
+    const expiresIn = Number(new URL(signed.body.url).searchParams.get('X-Amz-Expires'));
+    const declaredExpiry = new Date(signed.body.expiresAt).getTime() - Date.now();
+    check(
+      'caduca en 5 minutos, y lo dice la respuesta',
+      expiresIn === 300 && declaredExpiry > 240_000 && declaredExpiry <= 300_000,
+      `${expiresIn}s · ${Math.round(declaredExpiry / 1000)}s`,
+    );
+
+    // Sin cabecera de sesión: el navegador la usa tal cual.
+    const download = await fetch(signed.body.url);
+    const downloaded = Buffer.from(await download.arrayBuffer());
+    check(
+      'la descarga funciona sin sesión y trae los bytes exactos',
+      download.status === 200 && downloaded.equals(photo),
+      `${download.status} · ${downloaded.length} bytes`,
+    );
+    check(
+      'el almacenamiento sirve el tipo y la entrega que fijó el servidor',
+      download.headers.get('content-type') === 'image/jpeg' &&
+        (download.headers.get('content-disposition') ?? '').startsWith('inline'),
+      `${download.headers.get('content-type')} · ${download.headers.get('content-disposition')}`,
+    );
+
+    const signedPdf = await mediaUrl(a, conversationId!, cot!.id);
+    const pdfDownload = await fetch(signedPdf.body.url);
+    await pdfDownload.arrayBuffer();
+    check(
+      'un PDF se DESCARGA, con su nombre en UTF-8',
+      signedPdf.body.disposition === 'attachment' &&
+        (pdfDownload.headers.get('content-disposition') ?? '').includes(
+          "filename*=UTF-8''Cotizaci%C3%B3n",
+        ),
+      pdfDownload.headers.get('content-disposition') ?? '',
+    );
+
+    // La firma cubre lo que decide el servidor.
+    const tampered = signedPdf.body.url.replace('attachment', 'inline');
+    const tamperedRes = await fetch(tampered);
+    await tamperedRes.arrayBuffer();
+    const otherKey = signed.body.url.replace(
+      /\/[0-9a-f-]{36}\.jpg/,
+      '/00000000-0000-7000-8000-000000000000.jpg',
+    );
+    const otherKeyRes = await fetch(otherKey);
+    await otherKeyRes.arrayBuffer();
+    check(
+      'cambiar la entrega o la clave rompe la firma (403)',
+      tamperedRes.status === 403 && otherKeyRes.status === 403,
+      `${tamperedRes.status} · ${otherKeyRes.status}`,
+    );
+
+    const shortLived = await storage.signedGetUrl(foto!.file!.storageKey, {
+      expiresInSeconds: 1,
+      contentType: 'image/jpeg',
+      disposition: 'inline',
+      filename: 'foto.jpg',
+    });
+    await sleep(2000);
+    const expired = await fetch(shortLived);
+    await expired.arrayBuffer();
+    check('una URL caducada ya no sirve (403)', expired.status === 403, `${expired.status}`);
+
+    section('12 · Quién puede pedir una URL');
+    const rejected = await mediaUrl(a, conversationId!, badSha!.id);
+    check(
+      'un archivo rechazado → 409 con su motivo',
+      rejected.status === 409 &&
+        (rejected.body as unknown as { type: string }).type === INBOX_PROBLEMS.MEDIA_NOT_READY &&
+        /SHA-256/.test((rejected.body as unknown as { detail: string }).detail),
+      `${rejected.status}`,
+    );
+    const pendingMessage = await db.message.findFirstOrThrow({
+      where: { tenantId: a.tenantId, conversationId: conversationId! },
+      select: { id: true },
+    });
+    const pendingMedia = await db.messageMedia.create({
+      data: {
+        tenantId: a.tenantId,
+        messageId: pendingMessage.id,
+        externalMediaId: `media-pendiente-${run}`,
+        mimeType: 'image/jpeg',
+      },
+      select: { id: true },
+    });
+    const pending = await mediaUrl(a, conversationId!, pendingMedia.id);
+    check(
+      'un archivo aún sin descargar → 409, sin URL',
+      pending.status === 409 && !('url' in pending.body),
+      `${pending.status}`,
+    );
+
+    // Un archivo que SÍ existe pero aún no está comprobado (así quedan las
+    // subidas del agente hasta que se confirman): tampoco se firma.
+    const notReadyFile = await db.file.create({
+      data: {
+        tenantId: a.tenantId,
+        storageKey: `${tenantPrefix(a.tenantId)}attachment/2026/09/${randomUUID()}.jpg`,
+        originalName: 'a-medias.jpg',
+        mimeType: 'image/jpeg',
+        sizeBytes: 10,
+        purpose: 'ATTACHMENT',
+        status: 'PENDING',
+      },
+      select: { id: true },
+    });
+    const notReadyMedia = await db.messageMedia.create({
+      data: {
+        tenantId: a.tenantId,
+        messageId: pendingMessage.id,
+        externalMediaId: `media-a-medias-${run}`,
+        mimeType: 'image/jpeg',
+        fileId: notReadyFile.id,
+      },
+      select: { id: true },
+    });
+    const notReady = await mediaUrl(a, conversationId!, notReadyMedia.id);
+    check(
+      'un archivo enlazado pero aún sin comprobar (PENDING) → 409, sin URL',
+      notReady.status === 409 && !('url' in notReady.body),
+      `${notReady.status}`,
+    );
+
+    // Otra empresa, por los dos caminos.
+    const fromB = await mediaUrl(b, conversationId!, foto!.id);
+    const bConversation = await db.conversation.findFirstOrThrow({
+      where: { tenantId: b.tenantId },
+      select: { id: true },
+    });
+    const crossed = await mediaUrl(b, bConversation.id, foto!.id);
+    check(
+      'otra empresa no obtiene la URL, ni con la conversación de A ni con la suya',
+      fromB.status === 404 && crossed.status === 404,
+      `${fromB.status} · ${crossed.status}`,
+    );
+
+    // Otra conversación de la MISMA empresa.
+    const otherClient = `5939${suffix}55`;
+    await postWebhook(
+      channelA,
+      mediaMessage(PHONE_A, 'image', 'media-otra', 'image/jpeg', { from: otherClient }),
+      SECRET_A,
+    );
+    let otherConversation: { id: string } | null = null;
+    for (let i = 0; i < 60 && !otherConversation; i++) {
+      otherConversation = await db.conversation.findFirst({
+        where: { tenantId: a.tenantId, contact: { whatsappE164: `+${otherClient}` } },
+        select: { id: true },
+      });
+      if (!otherConversation) await sleep(200);
+    }
+    if (!otherConversation) throw new Error('no se creó la segunda conversación');
+    const wrongConversation = await mediaUrl(a, otherConversation.id, foto!.id);
+    check(
+      'el archivo de otra conversación de la misma empresa → 404',
+      wrongConversation.status === 404,
+      `${wrongConversation.status}`,
+    );
+
+    // Permisos dentro de la empresa.
+    const pro = await db.plan.findUniqueOrThrow({ where: { code: 'pro' } });
+    await db.subscription.update({ where: { tenantId: a.tenantId }, data: { planId: pro.id } });
+    const roles = await http<{ roles: Array<{ id: string; key: string }> }>('GET', '/team/roles', {
+      token: a.accessToken,
+    });
+    const viewerRole = roles.body.roles.find((r) => r.key === 'VIEWER')!.id;
+    const limitedRole = await http<{ id: string }>('POST', '/team/roles', {
+      token: a.accessToken,
+      body: {
+        name: 'Sólo las suyas',
+        permissions: { 'conversation:read': 'OWN', 'conversation:write': 'OWN' },
+      },
+    });
+    const member = async (who: string, roleId: string): Promise<Session> => {
+      await http('POST', '/team/invitations', {
+        token: a.accessToken,
+        body: { email: email(who), roleId },
+      });
+      const token = tokenFrom(await waitForMail(email(who), 'te invita'));
+      return sessionFrom(
+        await http('POST', '/invitations/accept-new', {
+          body: { token, name: `Persona ${who}`, password: PASSWORD },
+        }),
+      );
+    };
+    const viewer = await member('visor', viewerRole);
+    const limited = await member('limitada', limitedRole.body.id);
+
+    const byViewer = await mediaUrl(viewer, conversationId!, foto!.id);
+    check('quien no puede ver conversaciones → 403', byViewer.status === 403, `${byViewer.status}`);
+    const beforeAssign = await mediaUrl(limited, conversationId!, foto!.id);
+    await http('POST', `/conversations/${conversationId!}/assign`, {
+      token: a.accessToken,
+      body: { userId: a.userId },
+    });
+    const afterAssign = await mediaUrl(limited, conversationId!, foto!.id);
+    check(
+      'quien sólo ve las suyas: sin asignar sí, asignada a otra persona → 404',
+      beforeAssign.status === 200 && afterAssign.status === 404,
+      `${beforeAssign.status} → ${afterAssign.status}`,
+    );
+
+    section('13 · Los mensajes no filtran nada');
+    const messages = await http<{
+      data: Array<{ media: { status: string; error: string | null } | null }>;
+    }>('GET', `/conversations/${conversationId!}/messages?limit=100`, { token: a.accessToken });
+    const withMedia = messages.body.data.filter((m) => m.media);
+    check(
+      'cada mensaje con archivo trae su estado (listos y rechazados)',
+      withMedia.some((m) => m.media!.status === 'ready') &&
+        withMedia.some((m) => m.media!.status === 'failed' && m.media!.error),
+      `${withMedia.length} con archivo`,
+    );
+    const raw = JSON.stringify(messages.body);
+    check(
+      'no aparecen ni la clave del almacenamiento ni ninguna URL',
+      !raw.includes('tenants/') && !raw.includes('storageKey') && !raw.includes('X-Amz'),
+    );
+
+    section('14 · El bucket sólo tiene lo guardado');
     for (const s of [a, b]) {
       const keys = (await storage.listKeys(tenantPrefix(s.tenantId))).sort();
       const files = (
