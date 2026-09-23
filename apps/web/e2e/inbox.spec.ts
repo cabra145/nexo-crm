@@ -1,4 +1,4 @@
-import { createHmac } from 'node:crypto';
+import { createHash, createHmac, randomBytes } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
 import { expect, type Page, test } from '@playwright/test';
 import { login, newAccount, registerAndVerify, workspaceUrl } from './helpers';
@@ -17,6 +17,13 @@ const displayOf = (id: string) => `+59399555${id.slice(-4)}`;
 const CLIENT = `5939${String(Date.now()).slice(-7)}`;
 const LATE_CLIENT = `5938${String(Date.now()).slice(-7)}`;
 const sentToMeta: Array<{ to: string; body: string }> = [];
+/** Archivos que el agente sube a Meta, y el que «envía» el cliente. */
+const uploadsToMeta: Buffer[] = [];
+/** Un PNG de verdad (1×1): el navegador tiene que poder PINTARLO. */
+const CLIENT_PHOTO = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+  'base64',
+);
 let graph: Server;
 let seq = 0;
 
@@ -29,18 +36,53 @@ test.beforeAll(async () => {
       res.end(JSON.stringify({ error: { message: 'Invalid OAuth access token.', code: 190 } }));
       return;
     }
+    const path = new URL(req.url ?? '/', url).pathname.split('/').filter(Boolean);
     if (req.method === 'GET') {
-      const id = new URL(req.url ?? '/', url).pathname.split('/')[2]!;
+      // El contenido va PRIMERO: /descargas/{id} y /{version}/{id} comparten
+      // la posición del identificador en el camino.
+      if (path[0] === 'descargas') {
+        res.setHeader('content-type', 'image/png');
+        res.end(CLIENT_PHOTO);
+        return;
+      }
+      // Datos del archivo que envía el cliente.
+      if (path[1] === 'media-del-cliente') {
+        res.end(
+          JSON.stringify({
+            url: `${url.origin}/descargas/media-del-cliente`,
+            mime_type: 'image/png',
+            sha256: createHash('sha256').update(CLIENT_PHOTO).digest('hex'),
+            file_size: CLIENT_PHOTO.length,
+          }),
+        );
+        return;
+      }
+      const id = path[1]!;
       res.end(
         JSON.stringify({ id, display_phone_number: displayOf(id), verified_name: 'Tienda Web' }),
       );
       return;
     }
+    // El agente sube un archivo a Meta.
+    if (path[2] === 'media') {
+      const chunks: Buffer[] = [];
+      req.on('data', (chunk: Buffer) => chunks.push(chunk));
+      req.on('end', () => {
+        uploadsToMeta.push(Buffer.concat(chunks));
+        res.end(JSON.stringify({ id: `meta-media-${uploadsToMeta.length}` }));
+      });
+      return;
+    }
     let raw = '';
     req.on('data', (chunk: Buffer) => (raw += chunk.toString()));
     req.on('end', () => {
-      const payload = JSON.parse(raw) as { to: string; text: { body: string } };
-      sentToMeta.push({ to: payload.to, body: payload.text.body });
+      const payload = JSON.parse(raw) as {
+        to: string;
+        type?: string;
+        text?: { body: string };
+        image?: { caption?: string };
+      };
+      sentToMeta.push({ to: payload.to, body: payload.text?.body ?? payload.image?.caption ?? '' });
       res.end(JSON.stringify({ messages: [{ id: `wamid.web.${Date.now()}.${++seq}` }] }));
     });
   });
@@ -57,6 +99,7 @@ async function clientWrites(
   from: string,
   text: string,
   secondsAgo = 0,
+  photo = false,
 ) {
   const raw = JSON.stringify({
     object: 'whatsapp_business_account',
@@ -78,8 +121,12 @@ async function clientWrites(
                   from,
                   id: `wamid.in.${Date.now()}.${++seq}`,
                   timestamp: String(Math.floor(Date.now() / 1000) - secondsAgo),
-                  type: 'text',
-                  text: { body: text },
+                  ...(photo
+                    ? {
+                        type: 'image',
+                        image: { id: 'media-del-cliente', mime_type: 'image/png', caption: text },
+                      }
+                    : { type: 'text', text: { body: text } }),
                 },
               ],
             },
@@ -178,6 +225,59 @@ test('recibir en tiempo real, tomar, responder y resolver', async ({ page }) => 
   await page.getByTestId(`conversacion-+${LATE_CLIENT}`).click();
   await expect(page.getByText('Pasaron más de 24 horas desde su último mensaje')).toBeVisible();
   await expect(page.getByLabel('Mensaje', { exact: true })).toHaveCount(0);
+});
+
+test('archivos: el cliente envía una foto y el agente adjunta un documento', async ({ page }) => {
+  const account = newAccount('archivos');
+  await registerAndVerify(page, account);
+  await login(page, account.email, account.password);
+  await expect(page).toHaveURL(workspaceUrl);
+  const slug = new URL(page.url()).pathname.split('/')[2]!;
+  const channel = await connectNumber(page, slug, phoneNumberId(3));
+  const client = `5937${String(Date.now()).slice(-7)}`;
+
+  await page.goto(`/w/${slug}/bandeja`);
+  await expect(page.getByText('En vivo')).toBeVisible();
+
+  // --- El cliente manda una foto ------------------------------------------------
+  await clientWrites(channel, client, 'Así llegó el pedido', 0, true);
+  await page.getByTestId(`conversacion-+${client}`).click();
+  const thread = page.getByRole('log', { name: 'Mensajes' });
+  await expect(thread).toContainText('Así llegó el pedido');
+  // El worker la descarga y la guarda; la bandeja la muestra con URL firmada.
+  const photo = thread.getByTestId('imagen-adjunta');
+  await expect(photo).toBeVisible();
+  // Y la imagen CARGA de verdad desde el almacenamiento.
+  await expect
+    .poll(() => photo.evaluate((img: HTMLImageElement) => img.naturalWidth > 0))
+    .toBe(true);
+
+  // --- El agente adjunta un documento --------------------------------------------
+  await page.getByRole('button', { name: 'Tomar' }).click();
+  await page.getByTestId('selector-de-archivo').setInputFiles({
+    name: 'Cotización.pdf',
+    mimeType: 'application/pdf',
+    buffer: Buffer.concat([Buffer.from('%PDF-1.7\n'), randomBytes(512)]),
+  });
+  await expect(page.getByTestId('adjunto-pendiente')).toContainText('Cotización.pdf');
+  await page.getByLabel('Mensaje', { exact: true }).fill('Te paso la cotización');
+  await page.getByRole('button', { name: 'Enviar' }).click();
+
+  const document = thread.getByTestId('documento-adjunto');
+  await expect(document).toContainText('Cotización.pdf');
+  await expect(
+    thread.getByTestId('mensaje').filter({ hasText: 'Te paso la cotización' }),
+  ).toHaveAttribute('data-status', 'SENT');
+  expect(uploadsToMeta.length).toBe(1);
+
+  // --- Un tipo que WhatsApp no admite se avisa antes de subir ---------------------
+  await page.getByTestId('selector-de-archivo').setInputFiles({
+    name: 'programa.exe',
+    mimeType: 'application/x-msdownload',
+    buffer: Buffer.from('MZ'),
+  });
+  await expect(page.getByText('tipo de archivo no admitido por WhatsApp')).toBeVisible();
+  await expect(page.getByTestId('adjunto-pendiente')).toHaveCount(0);
 });
 
 test('en móvil, la lista y la conversación se turnan', async ({ page }) => {

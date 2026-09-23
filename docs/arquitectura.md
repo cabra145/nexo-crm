@@ -450,6 +450,19 @@ el bucket con la base: cada objeto es un archivo READY y al revés. Quitar el
 SHA-256, el tipo real, la lista de dominios, la condición del enlace o el
 `phone_number_id` hace fallar sus comprobaciones (probado, las cinco a la vez).
 
+**Los archivos en la bandeja.** La URL firmada se pide desde la web sólo
+cuando hace falta y se guarda algo menos de lo que vive la firma, así que se
+renueva sola sin pedir una por cada repintado. Las imágenes, el audio y el
+vídeo se muestran en el hilo; un documento no firma nada hasta que alguien
+pulsa «Descargar». Un archivo aún sin guardar dice «Guardando…», y uno
+rechazado explica el motivo y recuerda que sigue estando en WhatsApp.
+
+Al adjuntar, la web valida con la MISMA política que la API (tipo y tamaño)
+antes de subir nada, sube con `XMLHttpRequest` para poder mostrar el progreso
+—16 MB sin barra parecen un cuelgue— y envía el mensaje con el `fileId`. La
+prueba de navegador comprueba que la imagen del cliente **se pinta de verdad**
+(`naturalWidth > 0`), no sólo que exista la etiqueta.
+
 **Limpieza de subidas abandonadas** (cola `maintenance`). Al reservar, la API
 encola un trabajo **aplazado 24 h** (`STORAGE_PENDING_TTL_HOURS`) para ESE
 archivo, con su id como id del trabajo. Al saltar, si sigue siendo una reserva

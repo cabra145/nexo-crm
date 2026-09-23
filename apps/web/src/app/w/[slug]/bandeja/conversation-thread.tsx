@@ -1,6 +1,13 @@
 'use client';
 
-import type { ConversationDetail, MessageView } from '@nexo/contracts';
+import {
+  ACCEPT_ATTRIBUTE,
+  checkMedia,
+  type ConversationDetail,
+  formatBytes,
+  MEDIA_POLICY,
+  type MessageView,
+} from '@nexo/contracts';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AlertCircle,
@@ -8,21 +15,32 @@ import {
   Check,
   CheckCheck,
   Clock,
+  Loader2,
+  Paperclip,
   RotateCcw,
   SendHorizontal,
+  X,
 } from 'lucide-react';
-import { type FormEvent, type KeyboardEvent, useEffect, useRef, useState } from 'react';
+import {
+  type ChangeEvent,
+  type FormEvent,
+  type KeyboardEvent,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
 import { ProblemAlert } from '@/components/auth/problem-alert';
 import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Select } from '@/components/ui/select';
 import { useSessionStore } from '@/lib/auth/session-store';
-import { inboxApi, inboxKeys } from '@/lib/inbox/api';
+import { inboxApi, inboxKeys, uploadToStorage } from '@/lib/inbox/api';
 import { teamApi } from '@/lib/team/api';
 import { useAccess } from '@/lib/team/use-access';
 import { cn } from '@/lib/utils';
 import { formatTime, remaining } from './format';
+import { MessageMedia } from './message-media';
 
 /** Reloj para la ventana de 24 h: se actualiza cada minuto. */
 function useNow(): number | null {
@@ -286,9 +304,12 @@ function Bubble({ conversationId, message: m }: { conversationId: string; messag
         {outbound && m.sender ? (
           <span className="text-[11px] font-medium text-fg-muted">{m.sender.name}</span>
         ) : null}
-        <p className="break-words whitespace-pre-wrap">
-          {m.body ?? <span className="text-fg-muted italic">({m.type.toLowerCase()})</span>}
-        </p>
+        {m.media ? <MessageMedia conversationId={conversationId} media={m.media} /> : null}
+        {m.body ? (
+          <p className="break-words whitespace-pre-wrap">{m.body}</p>
+        ) : m.media ? null : (
+          <p className="text-fg-muted italic">({m.type.toLowerCase()})</p>
+        )}
         <span className="flex items-center justify-end gap-1 text-[11px] text-fg-faint">
           {formatTime(m.createdAt)}
           {outbound ? <DeliveryIcon status={m.status} /> : null}
@@ -343,15 +364,51 @@ function Composer({
 }) {
   const queryClient = useQueryClient();
   const [text, setText] = useState('');
+  const [attachment, setAttachment] = useState<File | null>(null);
+  const [progress, setProgress] = useState<number | null>(null);
+  const [fileError, setFileError] = useState<string | null>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
+
+  const refresh = () => {
+    setText('');
+    setAttachment(null);
+    setProgress(null);
+    void queryClient.invalidateQueries({ queryKey: inboxKeys.messages(c.id) });
+    void queryClient.invalidateQueries({ queryKey: inboxKeys.conversation(c.id) });
+    void queryClient.invalidateQueries({ queryKey: inboxKeys.lists() });
+  };
+
   const send = useMutation({
-    mutationFn: (body: string) => inboxApi.send(c.id, body),
-    onSuccess: () => {
-      setText('');
-      void queryClient.invalidateQueries({ queryKey: inboxKeys.messages(c.id) });
-      void queryClient.invalidateQueries({ queryKey: inboxKeys.conversation(c.id) });
-      void queryClient.invalidateQueries({ queryKey: inboxKeys.lists() });
+    mutationFn: async ({ body, file }: { body: string; file: File | null }) => {
+      if (!file) return inboxApi.send(c.id, { body });
+      // Tres pasos: reservar, subir DIRECTO al almacenamiento y enviar.
+      const reservation = await inboxApi.reserveUpload(c.id, {
+        filename: file.name,
+        mimeType: file.type,
+        sizeBytes: file.size,
+      });
+      setProgress(0);
+      await uploadToStorage(reservation, file, setProgress);
+      return inboxApi.send(c.id, { fileId: reservation.fileId, ...(body ? { body } : {}) });
     },
+    onSuccess: refresh,
+    onError: () => setProgress(null),
   });
+
+  /** Se valida aquí lo mismo que valida la API, para avisar antes de subir. */
+  const chooseFile = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0] ?? null;
+    event.target.value = '';
+    if (!file) return;
+    const check = checkMedia({ mime: file.type, sizeBytes: file.size });
+    if (!check.ok) {
+      setFileError(check.reason);
+      setAttachment(null);
+      return;
+    }
+    setFileError(null);
+    setAttachment(file);
+  };
 
   if (!c.can.reply) {
     return (
@@ -383,7 +440,7 @@ function Composer({
   const submit = (event?: FormEvent) => {
     event?.preventDefault();
     const body = text.trim();
-    if (body && !send.isPending) send.mutate(body);
+    if ((body || attachment) && !send.isPending) send.mutate({ body, file: attachment });
   };
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     // Intro envía; Mayús+Intro, salto de línea.
@@ -393,13 +450,69 @@ function Composer({
     }
   };
 
+  const maxDocument = formatBytes(MEDIA_POLICY.document.maxBytes);
+
   return (
     <form onSubmit={submit} className="grid gap-2 border-t border-border p-3">
       <ProblemAlert error={send.error} />
+      {fileError ? (
+        <p role="alert" className="text-xs text-critical">
+          {fileError}
+        </p>
+      ) : null}
+
+      {attachment ? (
+        <div
+          className="flex items-center gap-2 rounded-md bg-surface-sunken px-3 py-2 text-xs"
+          data-testid="adjunto-pendiente"
+        >
+          {send.isPending ? (
+            <Loader2 className="size-3.5 animate-spin text-fg-muted" aria-hidden />
+          ) : (
+            <Paperclip className="size-3.5 text-fg-muted" aria-hidden />
+          )}
+          <span className="min-w-0 flex-1 truncate">{attachment.name}</span>
+          <span className="shrink-0 text-fg-faint">
+            {progress !== null && send.isPending
+              ? `Subiendo… ${progress}%`
+              : formatBytes(attachment.size)}
+          </span>
+          {!send.isPending ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              aria-label="Quitar el adjunto"
+              onClick={() => setAttachment(null)}
+            >
+              <X aria-hidden />
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
+
       <div className="flex items-end gap-2">
+        <input
+          ref={fileInput}
+          type="file"
+          accept={ACCEPT_ATTRIBUTE}
+          onChange={chooseFile}
+          className="hidden"
+          data-testid="selector-de-archivo"
+        />
+        <Button
+          type="button"
+          variant="ghost"
+          aria-label="Adjuntar un archivo"
+          title={`Imágenes, audio, vídeo y documentos (hasta ${maxDocument})`}
+          disabled={send.isPending}
+          onClick={() => fileInput.current?.click()}
+        >
+          <Paperclip aria-hidden />
+        </Button>
         <textarea
           aria-label="Mensaje"
-          placeholder="Escribe una respuesta…"
+          placeholder={attachment ? 'Añade un texto (opcional)…' : 'Escribe una respuesta…'}
           rows={2}
           value={text}
           maxLength={4096}
@@ -407,7 +520,11 @@ function Composer({
           onKeyDown={onKeyDown}
           className="min-h-10 flex-1 resize-none rounded-md border border-border bg-surface px-3 py-2 text-sm focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
         />
-        <Button type="submit" disabled={!text.trim() || send.isPending} aria-label="Enviar">
+        <Button
+          type="submit"
+          disabled={(!text.trim() && !attachment) || send.isPending}
+          aria-label="Enviar"
+        >
           <SendHorizontal aria-hidden />
         </Button>
       </div>
