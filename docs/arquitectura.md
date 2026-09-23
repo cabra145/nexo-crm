@@ -450,6 +450,16 @@ el bucket con la base: cada objeto es un archivo READY y al revés. Quitar el
 SHA-256, el tipo real, la lista de dominios, la condición del enlace o el
 `phone_number_id` hace fallar sus comprobaciones (probado, las cinco a la vez).
 
+**Verificadores contra los servicios reales** (bloque 2.4):
+`pnpm --filter @nexo/storage verify` y `pnpm --filter @nexo/api verify:whatsapp`,
+con su procedimiento en `docs/validacion-2.4.md`. La decisión de fondo: todo lo
+anterior se prueba contra simuladores, así que lo único sin verificar es la
+CONFIGURACIÓN de las cuentas reales; por eso cada comprobación se automatiza y
+**los dos verificadores se ejecutan en cada CI** —uno contra MinIO, otro contra
+el simulador de Meta—. Cuando fallen contra R2 o Meta, lo que falla es la
+configuración, no la herramienta. Sólo leen, salvo un objeto de prueba propio
+en el almacenamiento y el envío real que hay que pedir a mano con `--enviar`.
+
 ### Plantillas de Meta — bloque 2.3b
 
 Fuera de la ventana de 24 h, WhatsApp sólo deja escribir con una plantilla que

@@ -17,7 +17,8 @@
     "whatsapp:e2e": "tsx scripts/whatsapp-e2e.ts",
     "inbox:e2e": "tsx scripts/inbox-e2e.ts",
     "media:e2e": "tsx scripts/media-e2e.ts",
-    "templates:e2e": "tsx scripts/templates-e2e.ts"
+    "templates:e2e": "tsx scripts/templates-e2e.ts",
+    "verify:whatsapp": "node --env-file-if-exists=../../.env --import tsx scripts/verify-whatsapp.ts"
   },
   "dependencies": {
     "@nestjs/common": "11.2.5",

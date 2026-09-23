@@ -151,6 +151,11 @@ pnpm --silent --filter @nexo/database test:tenant-creation || fail "test:tenant-
 step "Almacenamiento: bucket privado en MinIO"
 pnpm --silent --filter @nexo/storage ensure-bucket || fail "ensure-bucket"
 
+# El mismo verificador que se lanza contra R2 en producción (verify:storage).
+# Probarlo aquí es lo que permite fiarse de él allí.
+step "Verificador del almacenamiento contra MinIO"
+APP_URL="$APP_URL" pnpm --silent --filter @nexo/storage verify || fail "verify:storage"
+
 step "Sin acceso al almacenamiento, en producción ni la API ni el worker arrancan"
 # Con una clave equivocada tienen que SALIR con error y decir por qué, no
 # quedarse escuchando: un despliegue mal configurado se para aquí.

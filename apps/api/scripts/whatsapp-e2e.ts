@@ -15,6 +15,7 @@
 import { createHash, createHmac } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
 import { PrismaClient } from '@nexo/database';
+import { verifyWhatsappChannel } from './lib/verify-whatsapp';
 import {
   API,
   check,
@@ -59,6 +60,16 @@ function startGraphSimulator(): Promise<Server> {
     if (auth !== `Bearer ${VALID_TOKEN}`) {
       res.statusCode = 401;
       res.end(JSON.stringify({ error: { message: 'Invalid OAuth access token.', code: 190 } }));
+      return;
+    }
+    // Cuenta de WhatsApp Business: lo que consulta el verificador.
+    const path2 = path[2];
+    if (path2 === 'message_templates') {
+      res.end(JSON.stringify({ data: [] }));
+      return;
+    }
+    if (path2 === 'subscribed_apps') {
+      res.end(JSON.stringify({ data: [{ whatsapp_business_api_data: { id: 'app-1' } }] }));
       return;
     }
     const known = phoneNumberId ? KNOWN_NUMBERS.get(phoneNumberId) : undefined;
@@ -625,7 +636,64 @@ async function main(): Promise<void> {
     );
 
     /* ---------------------------------------------------------------------- */
-    section('9 · Desconectar');
+    // La misma herramienta que se lanza contra Meta real (verify:whatsapp):
+    // si se rompe, es mejor descubrirlo aquí que delante del cliente.
+    section('9 · El verificador de canales');
+    const checks = await verifyWhatsappChannel({
+      graphUrl: process.env.META_GRAPH_URL ?? 'http://127.0.0.1:44200',
+      version: process.env.META_GRAPH_VERSION ?? 'v21.0',
+      accessToken: VALID_TOKEN,
+      phoneNumberId: NUMBER_A.phoneNumberId,
+      wabaId: '200000000000001',
+      displayId: `+${NUMBER_A.display.replace(/\D/g, '')}`,
+      webhookUrl: channel.body.webhookUrl,
+      verifyToken: channel.body.verifyToken,
+    });
+    const named = (fragment: string) => checks.find((c) => c.name.includes(fragment));
+    check(
+      'comprueba versión, token, número, cuenta y suscripción de la app',
+      [
+        'da acceso al número',
+        'el que Nexo tiene guardado',
+        'nombre verificado',
+        'cuenta de WhatsApp Business',
+        'suscrita a la cuenta',
+      ].every((fragment) => named(fragment)?.ok === true),
+      checks
+        .filter((c) => !c.ok)
+        .map((c) => c.name)
+        .join(' · '),
+    );
+    check(
+      'y contesta la verificación del webhook contra la API real',
+      named('contesta la verificación')?.ok === true,
+      named('contesta la verificación')?.detail ?? '',
+    );
+    check(
+      'avisa de que una URL local NO sirve para Meta',
+      named('pública y con https')?.ok === false,
+      named('pública y con https')?.detail ?? '',
+    );
+    const verificadorSinToken = await verifyWhatsappChannel({
+      graphUrl: process.env.META_GRAPH_URL ?? 'http://127.0.0.1:44200',
+      version: process.env.META_GRAPH_VERSION ?? 'v21.0',
+      accessToken: `EAAG${'z'.repeat(40)}`,
+      phoneNumberId: NUMBER_A.phoneNumberId,
+      wabaId: '200000000000001',
+      displayId: null,
+      webhookUrl: channel.body.webhookUrl,
+      verifyToken: channel.body.verifyToken,
+    });
+    check(
+      'con un token inválido lo dice, con el mensaje de Meta y sin el token',
+      verificadorSinToken[0]?.ok === false &&
+        verificadorSinToken[0].detail.includes('Invalid OAuth') &&
+        !JSON.stringify(verificadorSinToken).includes('zzzz'),
+      verificadorSinToken[0]?.detail ?? '',
+    );
+
+    /* ---------------------------------------------------------------------- */
+    section('10 · Desconectar');
     const desconectado = await http('DELETE', `/channels/${channel.body.id}`, as(owner));
     const trasDesconectar = await postWebhook(channel.body.id, payload, SECRET_A);
     const verificarTras = await fetch(verifyUrl(channel.body.id, channel.body.verifyToken));
@@ -648,7 +716,7 @@ async function main(): Promise<void> {
     );
 
     /* ---------------------------------------------------------------------- */
-    section('10 · Rastro');
+    section('11 · Rastro');
     let acciones: string[] = [];
     for (let i = 0; i < 30 && !['CREATE', 'DELETE'].every((a) => acciones.includes(a)); i++) {
       acciones = (

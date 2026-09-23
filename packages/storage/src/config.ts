@@ -24,8 +24,9 @@ export interface StorageEnv {
   S3_BUCKET?: string;
   S3_ACCESS_KEY?: string;
   S3_SECRET_KEY?: string;
-  S3_FORCE_PATH_STYLE?: boolean;
-  STORAGE_URL_TTL_SECONDS?: number;
+  /** Booleano o su texto («true», «1»…): esto puede venir del entorno crudo. */
+  S3_FORCE_PATH_STYLE?: boolean | string;
+  STORAGE_URL_TTL_SECONDS?: number | string;
 }
 
 export interface StorageConfig {
@@ -93,7 +94,14 @@ export function resolveStorageConfig(env: StorageEnv): StorageConfig | null {
     }
   }
 
-  const urlTtlSeconds = env.STORAGE_URL_TTL_SECONDS ?? 300;
+  // Se normaliza aquí y no sólo en el esquema de entorno: este paquete lo
+  // usan también scripts que leen `process.env` crudo, donde todo es texto.
+  // Un booleano en texto llegaba tal cual al SDK, que construía un endpoint
+  // inválido y el almacenamiento respondía 400 sin explicar nada.
+  const urlTtlSeconds =
+    env.STORAGE_URL_TTL_SECONDS === undefined || env.STORAGE_URL_TTL_SECONDS === ''
+      ? 300
+      : Number(env.STORAGE_URL_TTL_SECONDS);
   if (!Number.isInteger(urlTtlSeconds) || urlTtlSeconds < 30 || urlTtlSeconds > 3600) {
     throw new StorageConfigError('STORAGE_URL_TTL_SECONDS tiene que estar entre 30 y 3600');
   }
@@ -111,9 +119,16 @@ export function resolveStorageConfig(env: StorageEnv): StorageConfig | null {
     bucket,
     accessKeyId: env.S3_ACCESS_KEY,
     secretAccessKey: env.S3_SECRET_KEY,
-    forcePathStyle: env.S3_FORCE_PATH_STYLE ?? provider === 'minio',
+    forcePathStyle: asBoolean(env.S3_FORCE_PATH_STYLE) ?? provider === 'minio',
     urlTtlSeconds,
   };
+}
+
+/** `true`, `'true'` y `'1'` son sí; `false`, `'false'` y `'0'`, no; vacío, sin decidir. */
+function asBoolean(value: boolean | string | undefined): boolean | undefined {
+  if (typeof value === 'boolean') return value;
+  if (value === undefined || value.trim() === '') return undefined;
+  return ['true', '1', 'yes'].includes(value.trim().toLowerCase());
 }
 
 /**

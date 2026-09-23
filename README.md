@@ -26,7 +26,8 @@ documentos de IA y su facturación.
 La arquitectura completa —incluidas las decisiones descartadas y por qué— está
 en [`docs/arquitectura.md`](docs/arquitectura.md). La puesta en producción del
 almacenamiento de archivos (Cloudflare R2), en
-[`docs/despliegue-r2.md`](docs/despliegue-r2.md).
+[`docs/despliegue-r2.md`](docs/despliegue-r2.md); la validación contra Meta y R2
+reales, en [`docs/validacion-2.4.md`](docs/validacion-2.4.md).
 
 ---
 

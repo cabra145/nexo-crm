@@ -164,6 +164,27 @@ check(
   'R2 sin cuenta ni endpoint → error claro',
   throws(() => resolveStorageConfig({ ...keys }), StorageConfigError),
 );
+check(
+  'el entorno crudo (todo texto) se normaliza: booleanos y números',
+  (() => {
+    const fromEnv = resolveStorageConfig({
+      ...keys,
+      STORAGE_PROVIDER: 'minio',
+      S3_ENDPOINT: 'http://127.0.0.1:9000',
+      S3_FORCE_PATH_STYLE: 'true',
+      STORAGE_URL_TTL_SECONDS: '600',
+    });
+    // Un booleano en TEXTO llegaba tal cual al SDK de AWS, que construía un
+    // endpoint inválido: el almacenamiento respondía 400 sin explicar nada.
+    return fromEnv?.forcePathStyle === true && fromEnv.urlTtlSeconds === 600;
+  })(),
+);
+check(
+  '«false» en texto es no, no «cualquier texto es sí»',
+  resolveStorageConfig({ ...keys, R2_ACCOUNT_ID: 'x', S3_FORCE_PATH_STYLE: 'false' })
+    ?.forcePathStyle === false,
+);
+
 check('sin credenciales en desarrollo → desactivado', resolveStorageConfig({}) === null);
 check(
   'sin credenciales en producción → no arranca',
