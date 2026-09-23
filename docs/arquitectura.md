@@ -575,9 +575,11 @@ actualizaciones de seguridad públicas.
 
 - **Desarrollo:** se usa la última versión congelada de quay.io, fijada por
   etiqueta. Suficiente para trabajar en local.
-- **Producción:** pendiente de decidir entre un servicio compatible con S3
-  (Cloudflare R2, AWS S3, Backblaze B2) o SeaweedFS autoalojado. La aplicación
-  sólo usa la API S3 estándar, así que es un cambio de configuración.
+- **Producción: Cloudflare R2** (decidido en el bloque 2.3a). No cobra por
+  descarga, que es la operación más frecuente —las imágenes de las
+  conversaciones—, y habla la API S3 estándar: cambiar a S3, Backblaze B2 o
+  MinIO es cambiar variables de entorno, no código (`@nexo/storage`). La
+  puesta en marcha está en `docs/despliegue-r2.md`.
 
 ---
 
