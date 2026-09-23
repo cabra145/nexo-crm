@@ -450,6 +450,28 @@ el bucket con la base: cada objeto es un archivo READY y al revés. Quitar el
 SHA-256, el tipo real, la lista de dominios, la condición del enlace o el
 `phone_number_id` hace fallar sus comprobaciones (probado, las cinco a la vez).
 
+### Plantillas de Meta — bloque 2.3b
+
+Fuera de la ventana de 24 h, WhatsApp sólo deja escribir con una plantilla que
+Meta haya aprobado.
+
+| Decisión                                          | Por qué                                                                                                                                                                                                                                                                                                       |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Se sincronizan, no se crean**                   | Las plantillas se crean en el panel de Meta, que las revisa y puede tardar horas. `POST /channels/:id/templates/sync` las trae y las empareja por (canal, nombre, idioma), que es como las identifica Meta: la misma plantilla en dos idiomas son dos                                                         |
+| **El estado lo mantiene el webhook**              | Meta envía `message_template_status_update` por el MISMO webhook del canal: aprobada, rechazada, pausada. Se aplica al vuelo, sin volver a preguntar. Se busca por el id de Meta y, si no viene, por nombre e idioma **dentro de ese canal**: dos números de la misma empresa pueden tener la misma plantilla |
+| **Sólo variables del cuerpo, por ahora**          | Las de la cabecera y las de los botones tienen cada una su forma en la Graph API. Las demás se listan marcadas con su motivo: decir por qué no se puede es mejor que ofrecer un envío que Meta rechazaría                                                                                                     |
+| **La plantilla es lo único que salta la ventana** | `assertCanSend` sigue exigiendo canal conectado, y la ventana sólo cuando no hay plantilla                                                                                                                                                                                                                    |
+| **Las variables tienen que cuadrar exactamente**  | Ni de más ni de menos, y ninguna vacía: Meta rechaza el mensaje entero, y el agente no sabría por qué                                                                                                                                                                                                         |
+| **Se guarda el texto ya rellenado**               | El mensaje guarda qué plantilla y con qué valores, y como cuerpo el texto final: es lo que el cliente recibió, y es lo que tiene que leer el equipo en el hilo                                                                                                                                                |
+| **Se comprueba otra vez al enviar**               | Entre que el agente la elige y el worker la envía, Meta puede haberla pausado                                                                                                                                                                                                                                 |
+| **Sin texto libre junto a una plantilla**         | Meta enviaría sólo la plantilla, y el agente creería que mandó las dos cosas                                                                                                                                                                                                                                  |
+
+Quitar la comprobación de estado, la de variables, la excepción de la ventana
+o el acotado por canal del aviso de estado hace fallar sus comprobaciones
+(probado). La última sólo se detecta con **dos canales de la misma empresa**:
+entre empresas ya lo impide la RLS, y la primera versión de esa prueba pasaba
+igual con la protección quitada.
+
 **Puesta en producción del almacenamiento** (bucket, token con permisos
 mínimos, CORS, checklists, riesgos y rollback): `docs/despliegue-r2.md`.
 

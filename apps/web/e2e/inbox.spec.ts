@@ -17,6 +17,18 @@ const displayOf = (id: string) => `+59399555${id.slice(-4)}`;
 const CLIENT = `5939${String(Date.now()).slice(-7)}`;
 const LATE_CLIENT = `5938${String(Date.now()).slice(-7)}`;
 const sentToMeta: Array<{ to: string; body: string }> = [];
+/** Plantillas que «tiene» la cuenta de WhatsApp Business del simulador. */
+const TEMPLATES = [
+  {
+    id: 'meta-tpl-web',
+    name: 'recordatorio_web',
+    language: 'es',
+    category: 'UTILITY',
+    status: 'APPROVED',
+    components: [{ type: 'BODY', text: 'Hola {{1}}, tu pedido llega el {{2}}.' }],
+  },
+];
+const templatesToMeta: Array<Record<string, unknown>> = [];
 /** Archivos que el agente sube a Meta, y el que «envía» el cliente. */
 const uploadsToMeta: Buffer[] = [];
 /** Un PNG de verdad (1×1): el navegador tiene que poder PINTARLO. */
@@ -57,6 +69,11 @@ test.beforeAll(async () => {
         );
         return;
       }
+      // Plantillas de la cuenta.
+      if (path[2] === 'message_templates') {
+        res.end(JSON.stringify({ data: TEMPLATES }));
+        return;
+      }
       const id = path[1]!;
       res.end(
         JSON.stringify({ id, display_phone_number: displayOf(id), verified_name: 'Tienda Web' }),
@@ -81,7 +98,9 @@ test.beforeAll(async () => {
         type?: string;
         text?: { body: string };
         image?: { caption?: string };
+        template?: Record<string, unknown>;
       };
+      if (payload.template) templatesToMeta.push(payload.template);
       sentToMeta.push({ to: payload.to, body: payload.text?.body ?? payload.image?.caption ?? '' });
       res.end(JSON.stringify({ messages: [{ id: `wamid.web.${Date.now()}.${++seq}` }] }));
     });
@@ -278,6 +297,48 @@ test('archivos: el cliente envía una foto y el agente adjunta un documento', as
   });
   await expect(page.getByText('tipo de archivo no admitido por WhatsApp')).toBeVisible();
   await expect(page.getByTestId('adjunto-pendiente')).toHaveCount(0);
+});
+
+test('plantillas: fuera de la ventana de 24 h sólo se envía una plantilla', async ({ page }) => {
+  const account = newAccount('plantillas');
+  await registerAndVerify(page, account);
+  await login(page, account.email, account.password);
+  await expect(page).toHaveURL(workspaceUrl);
+  const slug = new URL(page.url()).pathname.split('/')[2]!;
+  const channel = await connectNumber(page, slug, phoneNumberId(4));
+  const client = `5936${String(Date.now()).slice(-7)}`;
+
+  // --- Sincronizar desde Ajustes --------------------------------------------------
+  const templates = page.getByTestId('plantillas');
+  await expect(templates).toContainText('Ninguna todavía');
+  await templates.getByRole('button', { name: 'Sincronizar con Meta' }).click();
+  await expect(templates).toContainText('1 en total · 1 lista(s) para enviar');
+
+  // --- Un cliente escribió hace más de 24 h ----------------------------------------
+  await clientWrites(channel, client, 'Hola, ¿me lo pueden confirmar?', 25 * 3600);
+  await page.goto(`/w/${slug}/bandeja`);
+  await page.getByTestId(`conversacion-+${client}`).click();
+  await expect(page.getByText('Pasaron más de 24 horas desde su último mensaje')).toBeVisible();
+  await expect(page.getByLabel('Mensaje', { exact: true })).toHaveCount(0);
+
+  // --- Enviar la plantilla ----------------------------------------------------------
+  await page.getByRole('button', { name: 'Enviar plantilla' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Enviar una plantilla' });
+  await dialog.getByTestId('plantilla-recordatorio_web').click();
+  await dialog.getByLabel('Variable 1').fill('Lucía');
+  await dialog.getByLabel('Variable 2').fill('jueves');
+  // La vista previa muestra el texto final, no {{1}}.
+  await expect(dialog.getByTestId('vista-previa-de-plantilla')).toHaveText(
+    'Hola Lucía, tu pedido llega el jueves.',
+  );
+  await dialog.getByRole('button', { name: 'Enviar plantilla' }).click();
+  await expect(dialog).toHaveCount(0);
+
+  const thread = page.getByRole('log', { name: 'Mensajes' });
+  const sent = thread.getByTestId('mensaje').filter({ hasText: 'Hola Lucía, tu pedido llega el' });
+  await expect(sent).toHaveAttribute('data-status', 'SENT');
+  expect(templatesToMeta).toHaveLength(1);
+  expect(templatesToMeta[0]).toMatchObject({ name: 'recordatorio_web' });
 });
 
 test('en móvil, la lista y la conversación se turnan', async ({ page }) => {

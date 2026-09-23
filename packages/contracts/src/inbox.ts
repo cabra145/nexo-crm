@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { templateVariableSchema } from './templates';
 
 /**
  * Bandeja de entrada: conversaciones de WhatsApp y sus mensajes.
@@ -151,9 +152,23 @@ export const sendMessageSchema = z
       .optional(),
     /** Archivo reservado y ya subido (ver `reserveUploadSchema`). */
     fileId: z.string().uuid().optional(),
+    /** Plantilla aprobada: lo ÚNICO que se puede enviar fuera de la ventana. */
+    templateId: z.string().uuid().optional(),
+    /** Sus valores, en el orden de `{{1}}`, `{{2}}`… */
+    variables: z.array(templateVariableSchema).max(20).optional(),
   })
-  .refine((v) => Boolean(v.fileId) || (v.body ?? '').length > 0, {
-    message: 'escribe un mensaje o adjunta un archivo',
+  .refine((v) => Boolean(v.fileId) || Boolean(v.templateId) || (v.body ?? '').length > 0, {
+    message: 'escribe un mensaje, adjunta un archivo o elige una plantilla',
+    path: ['body'],
+  })
+  .refine((v) => !(v.templateId && v.fileId), {
+    message: 'una plantilla no lleva adjunto',
+    path: ['fileId'],
+  })
+  .refine((v) => !(v.templateId && (v.body ?? '') !== ''), {
+    // El texto de una plantilla es el suyo, con sus variables: no se le añade
+    // nada, porque Meta enviaría sólo la plantilla y el agente no lo sabría.
+    message: 'el texto de una plantilla son sus variables',
     path: ['body'],
   });
 export type SendMessageInput = z.infer<typeof sendMessageSchema>;

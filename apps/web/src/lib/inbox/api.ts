@@ -6,6 +6,7 @@ import type {
   MessagePage,
   MessageView,
   ReserveUploadInput,
+  TemplateView,
   SendMessageInput,
   UploadReservationView,
 } from '@nexo/contracts';
@@ -37,6 +38,10 @@ export const inboxApi = {
       body: input,
       auth: true,
     }),
+
+  /** Plantillas aprobadas que se pueden enviar en esta conversación. */
+  templates: (id: string) =>
+    apiFetch<TemplateView[]>(`/conversations/${id}/templates`, { auth: true }),
 
   /** URL firmada para ver o descargar un archivo. Caduca en minutos. */
   mediaUrl: (id: string, mediaId: string) =>
@@ -113,4 +118,5 @@ export const inboxKeys = {
   conversation: (id: string) => ['inbox', 'conversation', id] as const,
   messages: (id: string) => ['inbox', 'messages', id] as const,
   mediaUrl: (mediaId: string) => ['inbox', 'media', mediaId] as const,
+  templates: (id: string) => ['inbox', 'templates', id] as const,
 };

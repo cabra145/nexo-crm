@@ -176,6 +176,39 @@ export function sendWhatsappMedia(
   });
 }
 
+/**
+ * Envía una plantilla aprobada. Es lo único que Meta acepta fuera de la
+ * ventana de 24 h.
+ *
+ * Los parámetros van en el orden de `{{1}}`, `{{2}}`…: Meta no los nombra,
+ * los numera por posición.
+ */
+export function sendWhatsappTemplate(
+  phoneNumberId: string,
+  accessToken: string,
+  to: string,
+  template: { name: string; language: string; variables: string[] },
+): Promise<string> {
+  return sendMessage(phoneNumberId, accessToken, {
+    to,
+    type: 'template',
+    template: {
+      name: template.name,
+      language: { code: template.language },
+      ...(template.variables.length > 0
+        ? {
+            components: [
+              {
+                type: 'body',
+                parameters: template.variables.map((text) => ({ type: 'text', text })),
+              },
+            ],
+          }
+        : {}),
+    },
+  });
+}
+
 /* ========================================================================== */
 /*  Archivos que envían los clientes                                          */
 /* ========================================================================== */

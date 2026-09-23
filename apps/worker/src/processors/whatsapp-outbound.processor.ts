@@ -12,6 +12,7 @@ import {
   GraphSendError,
   INVALID_TOKEN_CODE,
   sendWhatsappMedia,
+  sendWhatsappTemplate,
   sendWhatsappText,
   uploadWhatsappMedia,
 } from '../lib/graph';
@@ -49,6 +50,9 @@ export const whatsappOutboundProcessor = defineProcessor({
           conversation: {
             select: { assigneeId: true, contact: { select: { whatsappE164: true } } },
           },
+          templateId: true,
+          templateParams: true,
+          template: { select: { name: true, language: true, status: true } },
           media: {
             select: {
               id: true,
@@ -90,7 +94,9 @@ export const whatsappOutboundProcessor = defineProcessor({
     }
     if (!to) return fail('El contacto no tiene número de WhatsApp.');
     const attachment = message.media[0] ?? null;
-    if (!attachment && !message.body) return fail('El mensaje está vacío.');
+    if (!attachment && !message.templateId && !message.body) {
+      return fail('El mensaje está vacío.');
+    }
 
     const { accessToken } = JSON.parse(
       decrypt(channel.credentialsEncrypted, env.ENCRYPTION_KEY),
@@ -98,7 +104,25 @@ export const whatsappOutboundProcessor = defineProcessor({
 
     let wamid: string;
     try {
-      if (attachment) {
+      if (message.templateId) {
+        // Se comprueba otra vez aquí: entre que el agente la eligió y esto se
+        // envía, Meta puede haberla pausado o rechazado.
+        if (!message.template) return fail('La plantilla ya no existe.');
+        if (message.template.status !== 'APPROVED') {
+          return fail(
+            `Meta tiene la plantilla en estado ${message.template.status.toLowerCase()}.`,
+          );
+        }
+        const params = (message.templateParams ?? {}) as { variables?: unknown };
+        const variables = Array.isArray(params.variables)
+          ? params.variables.map((v) => String(v))
+          : [];
+        wamid = await sendWhatsappTemplate(channel.externalId, accessToken, to, {
+          name: message.template.name,
+          language: message.template.language,
+          variables,
+        });
+      } else if (attachment) {
         if (!attachment.file || !storage) return fail('El archivo adjunto no está disponible.');
         const kind = mediaKindOf(attachment.file.mimeType);
         if (!kind || kind === 'sticker') return fail('Ese tipo de archivo no se puede enviar.');

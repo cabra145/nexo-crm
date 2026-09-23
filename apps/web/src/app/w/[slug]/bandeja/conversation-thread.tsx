@@ -15,6 +15,7 @@ import {
   Check,
   CheckCheck,
   Clock,
+  FileText,
   Loader2,
   Paperclip,
   RotateCcw,
@@ -41,6 +42,7 @@ import { useAccess } from '@/lib/team/use-access';
 import { cn } from '@/lib/utils';
 import { formatTime, remaining } from './format';
 import { MessageMedia } from './message-media';
+import { TemplateDialog } from './template-dialog';
 
 /** Reloj para la ventana de 24 h: se actualiza cada minuto. */
 function useNow(): number | null {
@@ -367,6 +369,7 @@ function Composer({
   const [attachment, setAttachment] = useState<File | null>(null);
   const [progress, setProgress] = useState<number | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
+  const [templatesOpen, setTemplatesOpen] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
 
   const refresh = () => {
@@ -428,11 +431,18 @@ function Composer({
   }
   if (clockReady && !windowOpen) {
     return (
-      <div className="border-t border-border p-4">
+      <div className="grid gap-3 border-t border-border p-4">
         <Alert tone="warning" title="Pasaron más de 24 horas desde su último mensaje">
           WhatsApp sólo permite responder con texto libre durante las 24 horas siguientes al último
           mensaje del cliente. Para escribirle ahora hace falta una plantilla aprobada por Meta.
         </Alert>
+        <Button className="justify-self-start" onClick={() => setTemplatesOpen(true)}>
+          <FileText aria-hidden />
+          Enviar plantilla
+        </Button>
+        {templatesOpen ? (
+          <TemplateDialog conversationId={c.id} onClose={() => setTemplatesOpen(false)} />
+        ) : null}
       </div>
     );
   }

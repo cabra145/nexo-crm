@@ -5,6 +5,7 @@ import {
   metaWebhookSchema,
   QUEUE_NAMES,
   type RealtimeEvent,
+  templateStatusOf,
   waIdToE164,
   whatsappInboundJobSchema,
 } from '@nexo/contracts';
@@ -56,6 +57,7 @@ interface Summary {
   statuses: number;
   newContacts: number;
   media: number;
+  templates: number;
 }
 
 /** Conversaciones que cambiaron, para avisar a la bandeja al confirmar. */
@@ -134,9 +136,17 @@ export const whatsappInboundProcessor = defineProcessor({
           statuses: 0,
           newContacts: 0,
           media: 0,
+          templates: 0,
         };
         for (const entry of parsed.data.entry) {
           for (const change of entry.changes) {
+            // Meta manda por el MISMO webhook los cambios de estado de las
+            // plantillas: aprobada, rechazada, pausada. Se aplican aquí, así
+            // que la bandeja no tiene que preguntarle a Meta.
+            if (change.field === 'message_template_status_update') {
+              await applyTemplateStatus(tx, channel.id, change.value, result);
+              continue;
+            }
             if (change.field !== 'messages') continue;
             // Un evento de OTRO número que llega por la URL de este canal (una
             // app de Meta mal configurada, o alguien reenviando eventos) no
@@ -202,6 +212,46 @@ async function finish(
     where: { id },
     data: { status, lastError, processedAt: new Date() },
   });
+}
+
+/**
+ * Aplica un cambio de estado de plantilla. Se busca por su id de Meta y, si no
+ * lo trae, por nombre e idioma dentro de ESTE canal: nunca por nombre suelto,
+ * que se repite entre empresas.
+ */
+async function applyTemplateStatus(
+  tx: TenantTransactionClient,
+  channelId: string,
+  value: MetaChangeValue,
+  result: Summary,
+): Promise<void> {
+  if (!value.event) return;
+  const externalId = value.message_template_id ? String(value.message_template_id) : null;
+  const template = await tx.waTemplate.findFirst({
+    where: {
+      channelId,
+      ...(externalId
+        ? { externalId }
+        : {
+            name: value.message_template_name ?? '',
+            language: value.message_template_language ?? '',
+          }),
+    },
+    select: { id: true },
+  });
+  // Una plantilla que Nexo no conoce todavía: llegará en la próxima
+  // sincronización, ya con su estado.
+  if (!template) return;
+
+  const status = templateStatusOf(value.event);
+  await tx.waTemplate.update({
+    where: { id: template.id },
+    data: {
+      status,
+      rejectedReason: status === 'REJECTED' ? (value.reason ?? 'Meta no dio el motivo') : null,
+    },
+  });
+  result.templates += 1;
 }
 
 async function ingestChange(

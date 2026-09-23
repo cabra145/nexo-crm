@@ -107,8 +107,17 @@ export const metaStatusSchema = z
   .passthrough();
 export type MetaStatus = z.infer<typeof metaStatusSchema>;
 
+/** Cambio de estado de una plantilla (`message_template_status_update`). */
+export interface MetaTemplateStatusChange {
+  event?: string;
+  message_template_id?: string | number;
+  message_template_name?: string;
+  message_template_language?: string;
+  reason?: string;
+}
+
 /** Lo que el procesamiento usa de un cambio del webhook. */
-export interface MetaChangeValue {
+export interface MetaChangeValue extends MetaTemplateStatusChange {
   messaging_product?: string;
   metadata?: { phone_number_id: string; display_phone_number?: string };
   contacts?: Array<{ wa_id: string; profile?: { name?: string } }>;
@@ -135,6 +144,12 @@ export const metaWebhookSchema: z.ZodType<MetaWebhook, z.ZodTypeDef, unknown> = 
           field: z.string(),
           value: z.object({
             messaging_product: z.string().optional(),
+            // Cambio de estado de una plantilla: llega por el MISMO webhook.
+            event: z.string().optional(),
+            message_template_id: z.union([z.string(), z.number()]).optional(),
+            message_template_name: z.string().optional(),
+            message_template_language: z.string().optional(),
+            reason: z.string().optional(),
             metadata: z
               .object({
                 phone_number_id: z.string(),

@@ -17,5 +17,6 @@ export * from './tasks';
 export * from './deals';
 export * from './whatsapp';
 export * from './inbox';
+export * from './templates';
 export * from './realtime';
 export * from './files';

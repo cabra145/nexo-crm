@@ -14,7 +14,12 @@ import {
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiExcludeEndpoint, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { SkipThrottle } from '@nestjs/throttler';
-import { type ChannelView, connectWhatsappSchema } from '@nexo/contracts';
+import {
+  type ChannelView,
+  connectWhatsappSchema,
+  type TemplateSyncResult,
+  type TemplateView,
+} from '@nexo/contracts';
 import type { RawBodyRequest } from '@nestjs/common';
 import type { Request } from 'express';
 import type { z } from 'zod';
@@ -23,6 +28,7 @@ import { ZodValidationPipe } from '../common/pipes/zod-validation.pipe';
 import { CurrentAccess, RequirePermission } from '../team/access.decorators';
 import type { ResolvedAccess } from '../team/access.service';
 import { ChannelsService } from './channels.service';
+import { TemplatesService } from './templates.service';
 import { WebhookService } from './webhook.service';
 
 const uuid = new ParseUUIDPipe();
@@ -32,7 +38,10 @@ const uuid = new ParseUUIDPipe();
 @ApiBearerAuth()
 @Controller('channels')
 export class ChannelsController {
-  constructor(private readonly channels: ChannelsService) {}
+  constructor(
+    private readonly channels: ChannelsService,
+    private readonly templates: TemplatesService,
+  ) {}
 
   @Get()
   @RequirePermission('channel:manage')
@@ -50,6 +59,21 @@ export class ChannelsController {
     @Req() req: Request,
   ): Promise<ChannelView> {
     return this.channels.connect(access, body, req);
+  }
+
+  @Get(':id/templates')
+  @RequirePermission('template:manage')
+  @ApiOperation({ summary: 'Plantillas del canal, con su estado en Meta' })
+  templatesOf(@Param('id', uuid) id: string): Promise<TemplateView[]> {
+    return this.templates.list(id);
+  }
+
+  @Post(':id/templates/sync')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission('template:manage')
+  @ApiOperation({ summary: 'Traer de Meta las plantillas del canal' })
+  syncTemplates(@Param('id', uuid) id: string): Promise<TemplateSyncResult> {
+    return this.templates.sync(id);
   }
 
   @Delete(':id')

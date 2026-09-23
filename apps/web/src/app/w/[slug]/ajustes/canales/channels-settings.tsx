@@ -2,7 +2,7 @@
 
 import { type ChannelView, connectWhatsappSchema } from '@nexo/contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, Copy, MessageCircle, Plus } from 'lucide-react';
+import { Check, Copy, FileText, MessageCircle, Plus, RefreshCw } from 'lucide-react';
 import { type FormEvent, useState } from 'react';
 import { PasswordInput } from '@/components/auth/password-field';
 import { ProblemAlert } from '@/components/auth/problem-alert';
@@ -158,6 +158,8 @@ function ChannelCard({
         </Alert>
       ) : null}
 
+      <Templates channelId={channel.id} />
+
       <div className="grid gap-3 rounded-md bg-surface-sunken p-4">
         <p className="text-sm font-medium">Último paso: configura el webhook en Meta</p>
         <ol className="grid gap-1 text-sm text-fg-muted">
@@ -174,6 +176,64 @@ function ChannelCard({
         <CopyField label="Token de verificación" value={channel.verifyToken} secret />
       </div>
     </li>
+  );
+}
+
+/**
+ * Plantillas del canal. Se crean en el panel de Meta, que las aprueba; aquí
+ * sólo se sincronizan para poder enviarlas fuera de la ventana de 24 h.
+ */
+function Templates({ channelId }: { channelId: string }) {
+  const queryClient = useQueryClient();
+  const templates = useQuery({
+    queryKey: ['channels', channelId, 'templates'],
+    queryFn: () => channelsApi.templates(channelId),
+  });
+  const sync = useMutation({
+    mutationFn: () => channelsApi.syncTemplates(channelId),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['channels', channelId, 'templates'] });
+    },
+  });
+
+  const list = templates.data ?? [];
+  const sendable = list.filter((t) => t.sendable).length;
+
+  return (
+    <div className="grid gap-2 rounded-md border border-border p-4" data-testid="plantillas">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <FileText className="size-4 text-fg-muted" aria-hidden />
+          <p className="text-sm font-medium">Plantillas</p>
+        </div>
+        <Button
+          size="sm"
+          variant="secondary"
+          disabled={sync.isPending}
+          onClick={() => sync.mutate()}
+        >
+          <RefreshCw className={sync.isPending ? 'animate-spin' : undefined} aria-hidden />
+          {sync.isPending ? 'Sincronizando…' : 'Sincronizar con Meta'}
+        </Button>
+      </div>
+      <p className="text-sm text-fg-muted">
+        {templates.isLoading
+          ? 'Cargando…'
+          : list.length === 0
+            ? 'Ninguna todavía. Créalas en el panel de Meta y sincroniza.'
+            : `${list.length} en total · ${sendable} lista(s) para enviar.`}
+      </p>
+      {list
+        .filter((t) => !t.sendable)
+        .slice(0, 3)
+        .map((t) => (
+          <p key={t.id} className="text-xs text-fg-faint">
+            <span className="font-medium">{t.name}</span> ({t.language}): {t.blockedReason}
+            {t.rejectedReason ? ` — ${t.rejectedReason}` : ''}
+          </p>
+        ))}
+      <ProblemAlert error={sync.error} />
+    </div>
   );
 }
 

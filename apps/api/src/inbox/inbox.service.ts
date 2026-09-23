@@ -4,6 +4,7 @@ import {
   allowsCaption,
   canSend,
   checkMedia,
+  countVariables,
   dispositionFor,
   type ConversationCounts,
   type ConversationDetail,
@@ -27,7 +28,12 @@ import {
   PROBLEM_TYPES,
   QUEUE_NAMES,
   type RealtimeEvent,
+  renderTemplate,
   type SendMessageInput,
+  TEMPLATE_PROBLEMS,
+  templateBlockedReason,
+  templateBody,
+  type TemplateView,
   type UploadReservationView,
   type WhatsappOutboundJob,
 } from '@nexo/contracts';
@@ -47,6 +53,7 @@ import { traceIdOf } from '../common/trace-id';
 import { API_ENV } from '../config/config.module';
 import { AuditService } from '../queues/audit.service';
 import { MAINTENANCE_QUEUE, WHATSAPP_OUTBOUND_QUEUE } from '../queues/queue-tokens';
+import { TemplatesService } from '../whatsapp/templates.service';
 import { RealtimeService } from '../realtime/realtime.service';
 import { OBJECT_STORAGE } from '../storage/storage.module';
 import { AccessService, type ResolvedAccess } from '../team/access.service';
@@ -92,6 +99,7 @@ export class InboxService {
     @Inject(WHATSAPP_OUTBOUND_QUEUE) private readonly outbound: Queue,
     @Inject(MAINTENANCE_QUEUE) private readonly maintenance: Queue,
     @Inject(API_ENV) private readonly env: ApiEnv,
+    private readonly templates: TemplatesService,
     @Inject(OBJECT_STORAGE) private readonly storage: ObjectStorage | null,
   ) {}
 
@@ -274,6 +282,7 @@ export class InboxService {
           file: {
             select: {
               storageKey: true,
+              bucket: true,
               mimeType: true,
               originalName: true,
               status: true,
@@ -300,6 +309,17 @@ export class InboxService {
     // empresa o no se firma nada.
     if (file.tenantId !== access.tenantId) throw notFound('Archivo');
     assertTenantKey(access.tenantId, file.storageKey);
+    // El archivo guarda SU bucket. Si la configuración apunta a otro, firmar
+    // esta clave daría una URL que no sirve: mejor decirlo que devolver un
+    // 404 del almacenamiento que nadie sabría interpretar.
+    if (file.bucket !== this.storage.bucket) {
+      throw new ProblemException({
+        type: INBOX_PROBLEMS.MEDIA_NOT_READY,
+        title: 'El archivo no está disponible',
+        status: HttpStatus.CONFLICT,
+        detail: 'Está guardado en otro almacenamiento. Avisa a soporte.',
+      });
+    }
 
     const expiresInSeconds = this.storage.urlTtlSeconds;
     const filename = media.filename ?? file.originalName;
@@ -322,6 +342,19 @@ export class InboxService {
   /* ======================================================================== */
   /*  Escritura                                                                */
   /* ======================================================================== */
+
+  /** Plantillas que se pueden enviar HOY en esta conversación. */
+  async templatesFor(access: ResolvedAccess, conversationId: string): Promise<TemplateView[]> {
+    const writable = await this.visibleWhere(access, 'conversation:write');
+    const conversation = await runInTenantTransaction((tx) =>
+      tx.conversation.findFirst({
+        where: { AND: [{ id: conversationId }, writable] },
+        select: { channelId: true },
+      }),
+    );
+    if (!conversation) throw notFound('Conversación');
+    return this.templates.sendable(conversation.channelId);
+  }
 
   /**
    * Reserva una subida: comprueba lo que se puede comprobar ANTES de que
@@ -449,7 +482,7 @@ export class InboxService {
     // almacenamiento, y no deben tener abierta una transacción esperando.
     const attachment = input.fileId ? await this.verifyUpload(access, input.fileId, body) : null;
 
-    const { message, event, sender } = await runInTenantTransaction(async (tx) => {
+    const { message, event, sender, rendered } = await runInTenantTransaction(async (tx) => {
       // Bloquea la fila: dos envíos simultáneos a una conversación sin asignar
       // no la asignan a dos personas.
       await tx.$queryRaw`SELECT id FROM conversation WHERE id = ${id}::uuid FOR UPDATE`;
@@ -464,7 +497,13 @@ export class InboxService {
         },
       });
       if (!conversation) throw notFound('Conversación');
-      assertCanSend(conversation, now);
+      // Una plantilla es lo ÚNICO que Meta deja enviar fuera de la ventana:
+      // para ella sólo se exige que el canal siga conectado.
+      assertCanSend(conversation, now, { requireWindow: !input.templateId });
+
+      const template = input.templateId
+        ? await loadTemplate(tx, conversation.channelId, input.templateId, input.variables ?? [])
+        : null;
 
       if (attachment) {
         // Sólo un mensaje puede llevarse este archivo: si otro envío se
@@ -493,8 +532,13 @@ export class InboxService {
           conversationId: id,
           channelId: conversation.channelId,
           direction: 'OUTBOUND',
-          type: attachment ? attachment.messageType : 'TEXT',
-          body,
+          type: template ? 'TEMPLATE' : attachment ? attachment.messageType : 'TEXT',
+          // El texto que se guarda es el de la plantilla YA rellenado: es lo
+          // que verá el cliente y lo que tiene que ver el equipo.
+          body: template ? template.rendered : body,
+          ...(template
+            ? { templateId: template.id, templateParams: { variables: input.variables ?? [] } }
+            : {}),
           status: 'QUEUED',
           statusUpdatedAt: now,
           senderUserId: access.userId,
@@ -524,7 +568,10 @@ export class InboxService {
         where: { id },
         data: {
           lastMessageAt: now,
-          lastMessagePreview: preview(attachment?.kind ?? null, body),
+          lastMessagePreview: preview(
+            attachment?.kind ?? null,
+            template ? template.rendered : body,
+          ),
           lastMessageDirection: 'OUTBOUND',
           // Quien responde ya leyó lo anterior.
           unreadCount: 0,
@@ -545,7 +592,7 @@ export class InboxService {
         where: { id: access.userId },
         select: { id: true, name: true },
       });
-      return { message: created, event, sender };
+      return { message: created, event, sender, rendered: template?.rendered ?? body };
     });
 
     await this.enqueue(access.tenantId, message.id, message.id);
@@ -554,8 +601,8 @@ export class InboxService {
     return {
       id: message.id,
       direction: 'OUTBOUND',
-      type: attachment ? attachment.messageType : 'TEXT',
-      body,
+      type: input.templateId ? 'TEMPLATE' : attachment ? attachment.messageType : 'TEXT',
+      body: rendered,
       status: 'QUEUED',
       errorMessage: null,
       sender,
@@ -1046,6 +1093,54 @@ function toSummary(row: SummaryRow): ConversationSummary {
   };
 }
 
+/**
+ * La plantilla, comprobando que es de ESTE canal, que Meta la aprobó, que
+ * Nexo sabe enviarla y que las variables cuadran exactamente.
+ */
+async function loadTemplate(
+  tx: TenantTransactionClient,
+  channelId: string,
+  templateId: string,
+  variables: string[],
+): Promise<{ id: string; rendered: string }> {
+  const template = await tx.waTemplate.findFirst({
+    // De este canal: la de otro número no vale, aunque sea de la misma empresa.
+    where: { id: templateId, channelId },
+    select: { id: true, status: true, components: true },
+  });
+  if (!template) throw notFound('Plantilla');
+
+  const blocked =
+    template.status !== 'APPROVED'
+      ? `Meta la tiene en estado ${template.status.toLowerCase()}`
+      : templateBlockedReason(template.components);
+  if (blocked) {
+    throw new ProblemException({
+      type: TEMPLATE_PROBLEMS.NOT_SENDABLE,
+      title: 'Esa plantilla no se puede enviar',
+      status: HttpStatus.CONFLICT,
+      detail: blocked,
+    });
+  }
+
+  const body = templateBody(template.components);
+  const expected = countVariables(body);
+  if (variables.length !== expected) {
+    throw new ProblemException({
+      type: PROBLEM_TYPES.VALIDATION,
+      title: 'Faltan o sobran variables',
+      status: HttpStatus.BAD_REQUEST,
+      errors: [
+        {
+          field: 'variables',
+          message: `esta plantilla necesita ${expected} ${expected === 1 ? 'variable' : 'variables'}, y llegaron ${variables.length}`,
+        },
+      ],
+    });
+  }
+  return { id: template.id, rendered: renderTemplate(body, variables) };
+}
+
 /** Vista previa de la bandeja para un mensaje saliente. */
 function preview(kind: MediaKind | null, body: string | null): string {
   const label = kind ? MEDIA_LABELS[kind] : null;
@@ -1079,6 +1174,7 @@ function assertCanSend(
     channel: { status: string; credentialsEncrypted: string | null };
   },
   now: Date,
+  { requireWindow = true }: { requireWindow?: boolean } = {},
 ): void {
   if (conversation.channel.status !== 'CONNECTED' || !conversation.channel.credentialsEncrypted) {
     throw conflict(
@@ -1087,7 +1183,7 @@ function assertCanSend(
       INBOX_PROBLEMS.CHANNEL_DISCONNECTED,
     );
   }
-  if (!conversation.windowExpiresAt || conversation.windowExpiresAt <= now) {
+  if (requireWindow && (!conversation.windowExpiresAt || conversation.windowExpiresAt <= now)) {
     throw conflict(
       'Pasaron más de 24 horas desde el último mensaje del cliente',
       'WhatsApp sólo permite responder con texto libre dentro de las 24 horas siguientes al último mensaje del cliente. Fuera de ese plazo hace falta una plantilla aprobada.',

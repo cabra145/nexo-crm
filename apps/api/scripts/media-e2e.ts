@@ -887,6 +887,39 @@ async function main(): Promise<void> {
       `${notReady.status}`,
     );
 
+    // Un archivo guardado en OTRO bucket (p. ej. tras cambiar la
+    // configuración): no se firma una URL que no serviría.
+    const otherBucketFile = await db.file.create({
+      data: {
+        tenantId: a.tenantId,
+        storageKey: `${tenantPrefix(a.tenantId)}whatsapp-media/2026/09/${randomUUID()}.jpg`,
+        originalName: 'de-otro-bucket.jpg',
+        mimeType: 'image/jpeg',
+        sizeBytes: 10,
+        purpose: 'WHATSAPP_MEDIA',
+        status: 'READY',
+        readyAt: new Date(),
+        bucket: 'bucket-antiguo',
+      },
+      select: { id: true },
+    });
+    const otherBucketMedia = await db.messageMedia.create({
+      data: {
+        tenantId: a.tenantId,
+        messageId: pendingMessage.id,
+        externalMediaId: `media-otro-bucket-${run}`,
+        mimeType: 'image/jpeg',
+        fileId: otherBucketFile.id,
+      },
+      select: { id: true },
+    });
+    const otherBucket = await mediaUrl(a, conversationId!, otherBucketMedia.id);
+    check(
+      'un archivo de otro bucket → 409, no una URL que daría 404',
+      otherBucket.status === 409 && !('url' in otherBucket.body),
+      `${otherBucket.status}`,
+    );
+
     // Otra empresa, por los dos caminos.
     const fromB = await mediaUrl(b, conversationId!, foto!.id);
     const bConversation = await db.conversation.findFirstOrThrow({
@@ -1363,7 +1396,9 @@ async function main(): Promise<void> {
     for (const s of [a, b]) {
       const keys = new Set(await storage.listKeys(tenantPrefix(s.tenantId)));
       const files = await db.file.findMany({
-        where: { tenantId: s.tenantId },
+        // Sólo los de ESTE bucket: la prueba del bucket antiguo creó a
+        // propósito uno que no tiene objeto aquí.
+        where: { tenantId: s.tenantId, bucket: storage.bucket },
         select: { storageKey: true, status: true },
       });
       const ready = files.filter((f) => f.status === 'READY').map((f) => f.storageKey);

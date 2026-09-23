@@ -241,6 +241,9 @@ pnpm --silent --filter @nexo/api inbox:e2e || fail "inbox:e2e"
 step "Archivos de WhatsApp de extremo a extremo (SHA-256, tipo real, SSRF, aislamiento)"
 pnpm --silent --filter @nexo/api media:e2e || fail "media:e2e"
 
+step "Plantillas de WhatsApp de extremo a extremo (sincronizar, estados, envío fuera de ventana)"
+pnpm --silent --filter @nexo/api templates:e2e || fail "templates:e2e"
+
 step "Prueba de humo del worker"
 pnpm --silent --filter @nexo/worker smoke || fail "prueba de humo"
 # Un reintento idempotente es un caso normal, no un error: no puede dejar

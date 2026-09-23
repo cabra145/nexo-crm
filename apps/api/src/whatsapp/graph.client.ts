@@ -14,6 +14,17 @@ export class GraphError extends Error {
   }
 }
 
+/** Plantilla tal como la devuelve la Graph API. */
+export interface MetaTemplate {
+  id: string;
+  name: string;
+  language: string;
+  category?: string;
+  status: string;
+  components?: unknown;
+  rejected_reason?: string;
+}
+
 export interface PhoneNumberInfo {
   id: string;
   displayPhoneNumber: string;
@@ -47,6 +58,19 @@ export class GraphClient {
       displayPhoneNumber: body.display_phone_number,
       verifiedName: body.verified_name ?? null,
     };
+  }
+
+  /**
+   * Plantillas de una cuenta de WhatsApp Business. Se piden todas de una vez
+   * (100 por página, el máximo de Meta): una empresa con más de 100 plantillas
+   * activas es rarísima, y paginar aquí añadiría estado sin necesidad.
+   */
+  async listTemplates(wabaId: string, accessToken: string): Promise<MetaTemplate[]> {
+    const body = await this.request<{ data?: MetaTemplate[] }>(
+      `${wabaId}/message_templates?fields=id,name,language,category,status,components,rejected_reason&limit=100`,
+      accessToken,
+    );
+    return body.data ?? [];
   }
 
   private async request<T>(path: string, accessToken: string): Promise<T> {

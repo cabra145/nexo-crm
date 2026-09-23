@@ -23,6 +23,7 @@ import {
   reserveUploadSchema,
   type MessageView,
   sendMessageSchema,
+  type TemplateView,
   type UploadReservationView,
 } from '@nexo/contracts';
 import type { Request } from 'express';
@@ -96,6 +97,16 @@ export class InboxController {
     @Body(new ZodValidationPipe(sendMessageSchema)) body: z.infer<typeof sendMessageSchema>,
   ): Promise<MessageView> {
     return this.inbox.send(access, id, body);
+  }
+
+  @Get(':id/templates')
+  @RequirePermission('conversation:write')
+  @ApiOperation({ summary: 'Plantillas aprobadas que se pueden enviar aquí' })
+  templates(
+    @CurrentAccess() access: ResolvedAccess,
+    @Param('id', uuid) id: string,
+  ): Promise<TemplateView[]> {
+    return this.inbox.templatesFor(access, id);
   }
 
   @Post(':id/uploads')
