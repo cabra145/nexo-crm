@@ -24,7 +24,9 @@ documentos de IA y su facturación.
 | 7     | Endurecimiento y puesta en producción                                                  | Pendiente                 |
 
 La arquitectura completa —incluidas las decisiones descartadas y por qué— está
-en [`docs/arquitectura.md`](docs/arquitectura.md).
+en [`docs/arquitectura.md`](docs/arquitectura.md). La puesta en producción del
+almacenamiento de archivos (Cloudflare R2), en
+[`docs/despliegue-r2.md`](docs/despliegue-r2.md).
 
 ---
 

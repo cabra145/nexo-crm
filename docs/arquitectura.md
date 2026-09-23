@@ -450,6 +450,9 @@ el bucket con la base: cada objeto es un archivo READY y al revés. Quitar el
 SHA-256, el tipo real, la lista de dominios, la condición del enlace o el
 `phone_number_id` hace fallar sus comprobaciones (probado, las cinco a la vez).
 
+**Puesta en producción del almacenamiento** (bucket, token con permisos
+mínimos, CORS, checklists, riesgos y rollback): `docs/despliegue-r2.md`.
+
 **Los archivos en la bandeja.** La URL firmada se pide desde la web sólo
 cuando hace falta y se guarda algo menos de lo que vive la firma, así que se
 renueva sola sin pedir una por cada repintado. Las imágenes, el audio y el
